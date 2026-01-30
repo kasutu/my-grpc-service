@@ -1,0 +1,146 @@
+# Project Directory Structure:
+.
+├── lib/
+│   └── communications/
+│       └── generated/
+├── src/
+│   ├── content/
+│   │   ├── interfaces/
+│   │   │   ├── ack-request.interface.ts
+│   │   │   ├── ack-response.interface.ts
+│   │   │   ├── campaign.interface.ts
+│   │   │   ├── client-message.interface.ts
+│   │   │   ├── content-package.interface.ts
+│   │   │   ├── content.interface.ts
+│   │   │   ├── media.interface.ts
+│   │   │   ├── mediaref.interface.ts
+│   │   │   ├── server-message.interface.ts
+│   │   │   ├── subscribe-request.interface.ts
+│   │   │   └── timeslot.interface.ts
+│   │   ├── content-http.controller.ts
+│   │   ├── content-publisher.service.ts
+│   │   ├── content.controller.ts
+│   │   ├── content.module.ts
+│   │   └── content.proto
+│   ├── generated/
+│   ├── app.module.ts
+│   ├── grpc-client.options.ts
+│   └── main.ts
+├── bun.lock
+├── eslint.config.mjs
+├── gptree_output.txt
+├── nest-cli.json
+├── package.json
+├── proto.sh
+├── tsconfig.build.json
+└── tsconfig.json
+
+# BEGIN FILE CONTENTS
+
+# File: src/content/interfaces/ack-request.interface.ts
+
+export interface AckRequest {
+  device_id: string;
+  delivery_id: number;
+  processed_successfully: boolean;
+  error_message?: string;
+}
+
+
+# File: src/content/interfaces/ack-response.interface.ts
+
+export interface AckResponse {
+  accepted: boolean;
+}
+
+
+# File: src/content/interfaces/campaign.interface.ts
+
+export interface Campaign {
+  id: string;
+  index: number;
+  media_id: string;
+}
+
+
+# File: src/content/interfaces/client-message.interface.ts
+
+export interface ClientMessage {
+  deviceId: string; // was device_id
+  readyForContent: boolean; // was ready_for_content
+  timestamp: string;
+}
+
+
+# File: src/content/interfaces/content-package.interface.ts
+
+import { Content } from './content.interface';
+import { Media } from './media.interface';
+
+export interface ContentPackage {
+  delivery_id: number;
+  content: Content;
+  media: Media[];
+  requires_ack?: boolean;
+}
+
+
+# File: src/content/interfaces/content.interface.ts
+
+import { MediaRef } from 'src/content/interfaces/mediaref.interface';
+import { TimeSlot } from 'src/content/interfaces/timeslot.interface';
+
+export interface Content {
+  id: number;
+  hmac_signature: string;
+  time_slots: TimeSlot[];
+  fallback_media_ref: MediaRef;
+  created_at: string;
+}
+
+
+# File: src/content/interfaces/media.interface.ts
+
+export interface Media {
+  id: string;
+  checksum: string;
+  url: string;
+}
+
+
+# File: src/content/interfaces/mediaref.interface.ts
+
+export interface MediaRef {
+  media_id: string;
+}
+
+
+# File: src/content/interfaces/server-message.interface.ts
+
+import { ContentPackage } from './content-package.interface';
+
+export interface ServerMessage {
+  content_push?: ContentPackage;
+  heartbeat?: string;
+  error?: string;
+}
+
+
+# File: src/content/interfaces/subscribe-request.interface.ts
+
+export interface SubscribeRequest {
+  deviceId: string;
+  lastReceivedDeliveryId?: string;
+}
+
+
+# File: src/content/interfaces/timeslot.interface.ts
+
+import { Campaign } from 'src/content/interfaces/campaign.interface';
+
+export interface TimeSlot {
+  id: string;
+  start_window: string;
+  end_window: string;
+  campaigns: Campaign[];
+}

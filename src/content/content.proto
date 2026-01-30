@@ -1,0 +1,72 @@
+// Copyright (c) Localize Technologies, Inc. All rights reserved.
+
+// Used in communication with hydrogen nodes for content synchronization and control
+// Connnection is long lived and bidirectional
+
+syntax = "proto3";
+
+package content.v1;
+
+service ContentService {
+  // Flutter calls this once to subscribe to content updates
+  rpc Subscribe(SubscribeRequest) returns (stream ContentPackage);
+  
+  // Unary call for acknowledgments (simpler than bidirectional)
+  rpc Acknowledge(AckRequest) returns (AckResponse);
+}
+
+message SubscribeRequest {
+  string device_id = 1;
+  string last_received_delivery_id = 2; // For resume/reconnect
+}
+
+message ContentPackage {
+  string delivery_id = 1;
+  Content content = 2;
+  repeated Media media = 3;
+  bool requires_ack = 4; // If true, client must acknowledge
+}
+
+message AckRequest {
+  string device_id = 1;
+  string delivery_id = 2;
+  bool processed_successfully = 3;
+  string error_message = 4; // If failed
+}
+
+message AckResponse {
+  bool accepted = 1;
+}
+
+// Types
+
+message Content {
+  int64 id = 1;
+  string hmac_signature = 2;
+  repeated TimeSlot time_slots = 3;
+  MediaRef fallback_media_ref = 4;
+  string created_at = 5;
+}
+
+message TimeSlot {
+  string id = 1;
+  string start_window = 2;
+  string end_window = 3;
+  repeated Campaign campaigns = 4;
+}
+
+message Campaign {
+  string id = 1;
+  int32 index = 2;
+  string media_id = 3;
+}
+
+message MediaRef {
+  string media_id = 1;
+}
+
+message Media {
+  string id = 1;
+  string checksum = 2;
+  string url = 3;
+}
