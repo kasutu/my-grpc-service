@@ -3,6 +3,7 @@ import {
   SetClockOverride,
   RequestSystemReboot,
   UpdateNetworkConfig,
+  RotateScreen,
   AckRequest,
 } from 'src/generated/command/v1/command';
 
@@ -12,7 +13,6 @@ export class CommandMapper {
       commandId: json.command_id?.toString() ?? '',
       requiresAck: json.requires_ack ?? false,
       issuedAt: json.issued_at ?? new Date().toISOString(),
-      // oneof fields - only one should be present
       setClock: json.set_clock
         ? this.toSetClockOverride(json.set_clock)
         : undefined,
@@ -21,6 +21,9 @@ export class CommandMapper {
         : undefined,
       updateNetwork: json.update_network
         ? this.toUpdateNetworkConfig(json.update_network)
+        : undefined,
+      rotateScreen: json.rotate_screen
+        ? this.toRotateScreen(json.rotate_screen)
         : undefined,
     };
   }
@@ -44,6 +47,14 @@ export class CommandMapper {
     };
   }
 
+  // ADD THIS METHOD
+  private static toRotateScreen(json: any): RotateScreen {
+    return {
+      orientation: json.orientation ?? 'auto',
+      fullscreen: json.fullscreen ?? false,
+    };
+  }
+
   static toAckRequest(json: any): AckRequest {
     return {
       deviceId: json.device_id ?? '',
@@ -53,13 +64,19 @@ export class CommandMapper {
     };
   }
 
-  // Helper to determine which command type is present
+  // Update return type to include rotateScreen
   static getCommandType(
     pkg: CommandPackage,
-  ): 'setClock' | 'requestReboot' | 'updateNetwork' | 'unknown' {
+  ):
+    | 'setClock'
+    | 'requestReboot'
+    | 'updateNetwork'
+    | 'rotateScreen'
+    | 'unknown' {
     if (pkg.setClock) return 'setClock';
     if (pkg.requestReboot) return 'requestReboot';
     if (pkg.updateNetwork) return 'updateNetwork';
+    if (pkg.rotateScreen) return 'rotateScreen';
     return 'unknown';
   }
 }

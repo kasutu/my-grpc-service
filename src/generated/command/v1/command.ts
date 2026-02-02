@@ -17,9 +17,12 @@ export interface CommandPackage {
   commandId: string;
   setClock?: SetClockOverride | undefined;
   requestReboot?: RequestSystemReboot | undefined;
-  updateNetwork?: UpdateNetworkConfig | undefined;
+  updateNetwork?:
+    | UpdateNetworkConfig
+    | undefined;
+  /** NEW */
+  rotateScreen?: RotateScreen | undefined;
   requiresAck: boolean;
-  /** ISO 8601 */
   issuedAt: string;
 }
 
@@ -27,6 +30,13 @@ export interface CommandPackage {
 export interface SetClockOverride {
   /** ISO 8601, empty = reset to system time */
   simulatedTime: string;
+}
+
+export interface RotateScreen {
+  /** "landscape", "portrait", "auto", "landscape_left", "landscape_right", "portrait_up", "portrait_down" */
+  orientation: string;
+  /** optional: also toggle fullscreen */
+  fullscreen: boolean;
 }
 
 export interface RequestSystemReboot {

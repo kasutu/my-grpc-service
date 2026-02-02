@@ -2,9 +2,16 @@ import { Injectable, OnModuleDestroy } from '@nestjs/common';
 import { Subject } from 'rxjs';
 import { CommandPackage } from 'src/generated/command/v1/command';
 
+interface DeviceInfo {
+  deviceId: string;
+  connectedAt: Date;
+  lastActivity: Date;
+}
+
 @Injectable()
 export class CommandPublisherService implements OnModuleDestroy {
   private readonly subscriptions = new Map<string, Subject<CommandPackage>>();
+  private readonly deviceInfo = new Map<string, DeviceInfo>();
   private readonly pendingAcks = new Map<string, Set<string>>();
 
   subscribe(deviceId: string): Subject<CommandPackage> {
@@ -18,6 +25,14 @@ export class CommandPublisherService implements OnModuleDestroy {
     const stream$ = new Subject<CommandPackage>();
     this.subscriptions.set(deviceId, stream$);
 
+    // Track device info
+    const now = new Date();
+    this.deviceInfo.set(deviceId, {
+      deviceId,
+      connectedAt: now,
+      lastActivity: now,
+    });
+
     console.log(
       `🎮 Device ${deviceId} subscribed to commands (total: ${this.subscriptions.size})`,
     );
@@ -27,6 +42,7 @@ export class CommandPublisherService implements OnModuleDestroy {
   unsubscribe(deviceId: string) {
     console.log(`👋 Device ${deviceId} unsubscribed from commands`);
     this.subscriptions.delete(deviceId);
+    this.deviceInfo.delete(deviceId);
     this.pendingAcks.delete(deviceId);
   }
 
@@ -43,6 +59,12 @@ export class CommandPublisherService implements OnModuleDestroy {
       console.error(`   Error: ${errorMsg}`);
     }
 
+    // Update last activity
+    const info = this.deviceInfo.get(deviceId);
+    if (info) {
+      info.lastActivity = new Date();
+    }
+
     const devicePending = this.pendingAcks.get(deviceId);
     if (devicePending) {
       devicePending.delete(commandId);
@@ -56,6 +78,12 @@ export class CommandPublisherService implements OnModuleDestroy {
     if (stream$ && !stream$.closed) {
       stream$.next(commandPackage);
       console.log(`📤 Sent command ${commandPackage.commandId} to ${deviceId}`);
+
+      // Update last activity
+      const info = this.deviceInfo.get(deviceId);
+      if (info) {
+        info.lastActivity = new Date();
+      }
 
       if (commandPackage.requiresAck) {
         if (!this.pendingAcks.has(deviceId)) {
@@ -76,6 +104,10 @@ export class CommandPublisherService implements OnModuleDestroy {
     for (const [deviceId, stream$] of this.subscriptions) {
       if (!stream$.closed) {
         stream$.next(commandPackage);
+        const info = this.deviceInfo.get(deviceId);
+        if (info) {
+          info.lastActivity = new Date();
+        }
       }
     }
   }
@@ -84,10 +116,16 @@ export class CommandPublisherService implements OnModuleDestroy {
     return this.subscriptions.size;
   }
 
+  // NEW: Get list of connected devices
+  getConnectedDevices(): DeviceInfo[] {
+    return Array.from(this.deviceInfo.values());
+  }
+
   onModuleDestroy() {
     for (const [, stream$] of this.subscriptions) {
       stream$.complete();
     }
     this.subscriptions.clear();
+    this.deviceInfo.clear();
   }
 }

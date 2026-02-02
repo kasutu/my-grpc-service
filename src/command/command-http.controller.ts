@@ -6,6 +6,22 @@ import { CommandMapper } from 'src/command/interfaces/command.mapper';
 export class CommandHttpController {
   constructor(private readonly publisher: CommandPublisherService) {}
 
+  @Get('devices')
+  getConnectedDevices() {
+    const devices = this.publisher.getConnectedDevices();
+    return {
+      count: devices.length,
+      devices: devices.map((d) => ({
+        device_id: d.deviceId,
+        connected_at: d.connectedAt.toISOString(),
+        last_activity: d.lastActivity.toISOString(),
+        connected_for_seconds: Math.floor(
+          (Date.now() - d.connectedAt.getTime()) / 1000,
+        ),
+      })),
+    };
+  }
+
   @Post('clock/:deviceId')
   setClock(@Param('deviceId') deviceId: string, @Body() body: any) {
     const command = CommandMapper.toCommandPackage({
@@ -89,6 +105,49 @@ export class CommandHttpController {
   getStats() {
     return {
       connected_devices: this.publisher.getConnectedCount(),
+    };
+  }
+
+  @Post('rotate/:deviceId')
+  rotateScreen(@Param('deviceId') deviceId: string, @Body() body: any) {
+    const command = CommandMapper.toCommandPackage({
+      command_id: `rotate-${Date.now()}`,
+      requires_ack: true,
+      issued_at: new Date().toISOString(),
+      rotate_screen: {
+        orientation: body.orientation ?? 'auto',
+        fullscreen: body.fullscreen ?? null,
+      },
+    });
+
+    const success = this.publisher.sendCommand(deviceId, command);
+    return {
+      success,
+      message: success
+        ? `Rotate command sent to ${deviceId}`
+        : `Device ${deviceId} not connected`,
+      commandId: command.commandId,
+      orientation: body.orientation,
+    };
+  }
+
+  @Post('broadcast/rotate')
+  broadcastRotate(@Body() body: any) {
+    const command = CommandMapper.toCommandPackage({
+      command_id: `rotate-broadcast-${Date.now()}`,
+      requires_ack: false,
+      issued_at: new Date().toISOString(),
+      rotate_screen: {
+        orientation: body.orientation ?? 'auto',
+        fullscreen: body.fullscreen ?? null,
+      },
+    });
+
+    this.publisher.broadcastCommand(command);
+    return {
+      success: true,
+      message: 'Rotate broadcast sent',
+      orientation: body.orientation,
     };
   }
 }

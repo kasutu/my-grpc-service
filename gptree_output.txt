@@ -1,25 +1,31 @@
 # Project Directory Structure:
 .
-├── lib/
-│   └── communications/
-│       └── generated/
 ├── src/
 │   ├── command/
-│   │   └── v1/
-│   │       └── command.proto
+│   │   ├── interfaces/
+│   │   │   └── command.mapper.ts
+│   │   ├── v1/
+│   │   │   └── command.proto
+│   │   ├── command-http.controller.ts
+│   │   ├── command-publisher.service.ts
+│   │   ├── command.controller.ts
+│   │   └── command.module.ts
 │   ├── content/
 │   │   ├── interfaces/
 │   │   │   └── content.mapper.ts
 │   │   ├── v1/
-│   │   │   ├── command.proto
 │   │   │   └── content.proto
 │   │   ├── content-http.controller.ts
 │   │   ├── content-publisher.service.ts
 │   │   ├── content.controller.ts
-│   │   ├── content.module.ts
-│   │   └── content.proto
+│   │   └── content.module.ts
 │   ├── generated/
-│   │   └── content.ts
+│   │   ├── command/
+│   │   │   └── v1/
+│   │   │       └── command.ts
+│   │   └── content/
+│   │       └── v1/
+│   │           └── content.ts
 │   ├── app.module.ts
 │   ├── grpc-client.options.ts
 │   └── main.ts
@@ -28,10 +34,80 @@
 ├── gptree_output.txt
 ├── nest-cli.json
 ├── package.json
+├── proto.sh
 ├── tsconfig.build.json
 └── tsconfig.json
 
 # BEGIN FILE CONTENTS
+
+# File: src/command/interfaces/command.mapper.ts
+
+import {
+  CommandPackage,
+  SetClockOverride,
+  RequestSystemReboot,
+  UpdateNetworkConfig,
+  AckRequest,
+} from 'src/generated/command/v1/command';
+
+export class CommandMapper {
+  static toCommandPackage(json: any): CommandPackage {
+    return {
+      commandId: json.command_id?.toString() ?? '',
+      requiresAck: json.requires_ack ?? false,
+      issuedAt: json.issued_at ?? new Date().toISOString(),
+      // oneof fields - only one should be present
+      setClock: json.set_clock
+        ? this.toSetClockOverride(json.set_clock)
+        : undefined,
+      requestReboot: json.request_reboot
+        ? this.toRequestSystemReboot(json.request_reboot)
+        : undefined,
+      updateNetwork: json.update_network
+        ? this.toUpdateNetworkConfig(json.update_network)
+        : undefined,
+    };
+  }
+
+  private static toSetClockOverride(json: any): SetClockOverride {
+    return {
+      simulatedTime: json.simulated_time ?? '',
+    };
+  }
+
+  private static toRequestSystemReboot(json: any): RequestSystemReboot {
+    return {
+      delaySeconds: json.delay_seconds ?? 0,
+    };
+  }
+
+  private static toUpdateNetworkConfig(json: any): UpdateNetworkConfig {
+    return {
+      newSsid: json.new_ssid ?? '',
+      newPassword: json.new_password ?? '',
+    };
+  }
+
+  static toAckRequest(json: any): AckRequest {
+    return {
+      deviceId: json.device_id ?? '',
+      commandId: json.command_id?.toString() ?? '',
+      processedSuccessfully: json.processed_successfully ?? false,
+      errorMessage: json.error_message ?? '',
+    };
+  }
+
+  // Helper to determine which command type is present
+  static getCommandType(
+    pkg: CommandPackage,
+  ): 'setClock' | 'requestReboot' | 'updateNetwork' | 'unknown' {
+    if (pkg.setClock) return 'setClock';
+    if (pkg.requestReboot) return 'requestReboot';
+    if (pkg.updateNetwork) return 'updateNetwork';
+    return 'unknown';
+  }
+}
+
 
 # File: src/command/v1/command.proto
 
@@ -53,20 +129,25 @@ message SubscribeRequest {
 message CommandPackage {
   string command_id = 1;
   
-  // Oneof ensures only one command type is set (compile-time safety)
   oneof command {
     SetClockOverride set_clock = 2;
     RequestSystemReboot request_reboot = 3;
     UpdateNetworkConfig update_network = 4;
+    RotateScreen rotate_screen = 5;  // NEW
   }
   
-  bool requires_ack = 5;
-  string issued_at = 6;  // ISO 8601
+  bool requires_ack = 6;
+  string issued_at = 7;
 }
 
 // Explicit command definitions (no JSON parsing needed)
 message SetClockOverride {
   string simulated_time = 1;  // ISO 8601, empty = reset to system time
+}
+
+message RotateScreen {
+  string orientation = 1;  // "landscape", "portrait", "auto", "landscape_left", "landscape_right", "portrait_up", "portrait_down"
+  bool fullscreen = 2;     // optional: also toggle fullscreen
 }
 
 message RequestSystemReboot {
@@ -89,6 +170,311 @@ message AckResponse {
   bool accepted = 1;
 }
 
+# File: src/command/command-http.controller.ts
+
+import { Controller, Post, Param, Body, Get } from '@nestjs/common';
+import { CommandPublisherService } from './command-publisher.service';
+import { CommandMapper } from 'src/command/interfaces/command.mapper';
+
+@Controller('commands')
+export class CommandHttpController {
+  constructor(private readonly publisher: CommandPublisherService) {}
+
+  @Get('devices')
+  getConnectedDevices() {
+    const devices = this.publisher.getConnectedDevices();
+    return {
+      count: devices.length,
+      devices: devices.map((d) => ({
+        device_id: d.deviceId,
+        connected_at: d.connectedAt.toISOString(),
+        last_activity: d.lastActivity.toISOString(),
+        connected_for_seconds: Math.floor(
+          (Date.now() - d.connectedAt.getTime()) / 1000,
+        ),
+      })),
+    };
+  }
+
+  @Post('clock/:deviceId')
+  setClock(@Param('deviceId') deviceId: string, @Body() body: any) {
+    const command = CommandMapper.toCommandPackage({
+      command_id: `clock-${Date.now()}`,
+      requires_ack: true,
+      issued_at: new Date().toISOString(),
+      set_clock: {
+        simulated_time: body.simulated_time ?? '',
+      },
+    });
+
+    const success = this.publisher.sendCommand(deviceId, command);
+    return {
+      success,
+      message: success
+        ? `Clock command sent to ${deviceId}`
+        : `Device ${deviceId} not connected`,
+      commandId: command.commandId,
+    };
+  }
+
+  @Post('reboot/:deviceId')
+  rebootDevice(@Param('deviceId') deviceId: string, @Body() body: any) {
+    const command = CommandMapper.toCommandPackage({
+      command_id: `reboot-${Date.now()}`,
+      requires_ack: true,
+      issued_at: new Date().toISOString(),
+      request_reboot: {
+        delay_seconds: body.delay_seconds ?? 0,
+      },
+    });
+
+    const success = this.publisher.sendCommand(deviceId, command);
+    return {
+      success,
+      message: success
+        ? `Reboot command sent to ${deviceId}`
+        : `Device ${deviceId} not connected`,
+      commandId: command.commandId,
+    };
+  }
+
+  @Post('network/:deviceId')
+  updateNetwork(@Param('deviceId') deviceId: string, @Body() body: any) {
+    const command = CommandMapper.toCommandPackage({
+      command_id: `network-${Date.now()}`,
+      requires_ack: true,
+      issued_at: new Date().toISOString(),
+      update_network: {
+        new_ssid: body.new_ssid ?? '',
+        new_password: body.new_password ?? '',
+      },
+    });
+
+    const success = this.publisher.sendCommand(deviceId, command);
+    return {
+      success,
+      message: success
+        ? `Network config sent to ${deviceId}`
+        : `Device ${deviceId} not connected`,
+      commandId: command.commandId,
+    };
+  }
+
+  @Post('broadcast/clock')
+  broadcastClock(@Body() body: any) {
+    const command = CommandMapper.toCommandPackage({
+      command_id: `clock-broadcast-${Date.now()}`,
+      requires_ack: false,
+      issued_at: new Date().toISOString(),
+      set_clock: {
+        simulated_time: body.simulated_time ?? '',
+      },
+    });
+
+    this.publisher.broadcastCommand(command);
+    return { success: true, message: 'Clock broadcast sent' };
+  }
+
+  @Get('stats')
+  getStats() {
+    return {
+      connected_devices: this.publisher.getConnectedCount(),
+    };
+  }
+}
+
+
+# File: src/command/command-publisher.service.ts
+
+import { Injectable, OnModuleDestroy } from '@nestjs/common';
+import { Subject } from 'rxjs';
+import { CommandPackage } from 'src/generated/command/v1/command';
+
+interface DeviceInfo {
+  deviceId: string;
+  connectedAt: Date;
+  lastActivity: Date;
+}
+
+@Injectable()
+export class CommandPublisherService implements OnModuleDestroy {
+  private readonly subscriptions = new Map<string, Subject<CommandPackage>>();
+  private readonly deviceInfo = new Map<string, DeviceInfo>();
+  private readonly pendingAcks = new Map<string, Set<string>>();
+
+  subscribe(deviceId: string): Subject<CommandPackage> {
+    if (this.subscriptions.has(deviceId)) {
+      console.log(
+        `⚠️ Device ${deviceId} already subscribed to commands, replacing`,
+      );
+      this.subscriptions.get(deviceId)?.complete();
+    }
+
+    const stream$ = new Subject<CommandPackage>();
+    this.subscriptions.set(deviceId, stream$);
+
+    // Track device info
+    const now = new Date();
+    this.deviceInfo.set(deviceId, {
+      deviceId,
+      connectedAt: now,
+      lastActivity: now,
+    });
+
+    console.log(
+      `🎮 Device ${deviceId} subscribed to commands (total: ${this.subscriptions.size})`,
+    );
+    return stream$;
+  }
+
+  unsubscribe(deviceId: string) {
+    console.log(`👋 Device ${deviceId} unsubscribed from commands`);
+    this.subscriptions.delete(deviceId);
+    this.deviceInfo.delete(deviceId);
+    this.pendingAcks.delete(deviceId);
+  }
+
+  acknowledge(
+    deviceId: string,
+    commandId: string,
+    success: boolean,
+    errorMsg?: string,
+  ) {
+    console.log(
+      `✅ Command ack from ${deviceId} for ${commandId}: ${success ? 'success' : 'failed'}`,
+    );
+    if (!success && errorMsg) {
+      console.error(`   Error: ${errorMsg}`);
+    }
+
+    // Update last activity
+    const info = this.deviceInfo.get(deviceId);
+    if (info) {
+      info.lastActivity = new Date();
+    }
+
+    const devicePending = this.pendingAcks.get(deviceId);
+    if (devicePending) {
+      devicePending.delete(commandId);
+    }
+    return { accepted: true };
+  }
+
+  sendCommand(deviceId: string, commandPackage: CommandPackage) {
+    const stream$ = this.subscriptions.get(deviceId);
+
+    if (stream$ && !stream$.closed) {
+      stream$.next(commandPackage);
+      console.log(`📤 Sent command ${commandPackage.commandId} to ${deviceId}`);
+
+      // Update last activity
+      const info = this.deviceInfo.get(deviceId);
+      if (info) {
+        info.lastActivity = new Date();
+      }
+
+      if (commandPackage.requiresAck) {
+        if (!this.pendingAcks.has(deviceId)) {
+          this.pendingAcks.set(deviceId, new Set());
+        }
+        this.pendingAcks.get(deviceId)?.add(commandPackage.commandId);
+      }
+      return true;
+    }
+    console.log(`❌ Device ${deviceId} not connected for commands`);
+    return false;
+  }
+
+  broadcastCommand(commandPackage: CommandPackage) {
+    console.log(
+      `📢 Broadcasting command to ${this.subscriptions.size} devices`,
+    );
+    for (const [deviceId, stream$] of this.subscriptions) {
+      if (!stream$.closed) {
+        stream$.next(commandPackage);
+        const info = this.deviceInfo.get(deviceId);
+        if (info) {
+          info.lastActivity = new Date();
+        }
+      }
+    }
+  }
+
+  getConnectedCount(): number {
+    return this.subscriptions.size;
+  }
+
+  // NEW: Get list of connected devices
+  getConnectedDevices(): DeviceInfo[] {
+    return Array.from(this.deviceInfo.values());
+  }
+
+  onModuleDestroy() {
+    for (const [, stream$] of this.subscriptions) {
+      stream$.complete();
+    }
+    this.subscriptions.clear();
+    this.deviceInfo.clear();
+  }
+}
+
+
+# File: src/command/command.controller.ts
+
+import { Controller } from '@nestjs/common';
+import { GrpcMethod } from '@nestjs/microservices';
+import { Observable, Subject } from 'rxjs';
+import { CommandPublisherService } from './command-publisher.service';
+import {
+  SubscribeRequest,
+  CommandPackage,
+  AckRequest,
+  AckResponse,
+} from 'src/generated/command/v1/command';
+
+@Controller()
+export class CommandController {
+  constructor(private readonly publisher: CommandPublisherService) {}
+
+  @GrpcMethod('RemoteCommandService')
+  subscribeCommands(request: SubscribeRequest): Observable<CommandPackage> {
+    const stream$ = this.publisher.subscribe(request.deviceId);
+
+    stream$.subscribe({
+      complete: () => {
+        this.publisher.unsubscribe(request.deviceId);
+      },
+    });
+
+    return stream$.asObservable();
+  }
+
+  @GrpcMethod('RemoteCommandService')
+  acknowledgeCommand(request: AckRequest): AckResponse {
+    return this.publisher.acknowledge(
+      request.deviceId,
+      request.commandId,
+      request.processedSuccessfully,
+      request.errorMessage,
+    );
+  }
+}
+
+
+# File: src/command/command.module.ts
+
+import { Module } from '@nestjs/common';
+import { CommandController } from './command.controller';
+import { CommandPublisherService } from './command-publisher.service';
+import { CommandHttpController } from './command-http.controller';
+
+@Module({
+  providers: [CommandPublisherService],
+  controllers: [CommandController, CommandHttpController],
+})
+export class CommandModule {}
+
+
 # File: src/content/interfaces/content.mapper.ts
 
 import {
@@ -98,7 +484,7 @@ import {
   Campaign,
   MediaRef,
   Media,
-} from 'src/generated/content';
+} from 'src/generated/content/v1/content';
 
 export class ContentMapper {
   static toContentPackage(json: any): ContentPackage {
@@ -165,62 +551,6 @@ export class ContentMapper {
   }
 }
 
-
-# File: src/content/v1/command.proto
-
-syntax = "proto3";
-
-package remote.v1;
-
-
-service RemoteCommandService {
-  rpc SubscribeCommands(SubscribeRequest) returns (stream CommandPackage);
-  rpc AcknowledgeCommand(AckRequest) returns (AckResponse);
-}
-
-message SubscribeRequest {
-  string device_id = 1;
-}
-
-// Strongly-typed command envelope
-message CommandPackage {
-  string command_id = 1;
-  
-  // Oneof ensures only one command type is set (compile-time safety)
-  oneof command {
-    SetClockOverride set_clock = 2;
-    RequestSystemReboot request_reboot = 3;
-    UpdateNetworkConfig update_network = 4;
-  }
-  
-  bool requires_ack = 5;
-  string issued_at = 6;  // ISO 8601
-}
-
-// Explicit command definitions (no JSON parsing needed)
-message SetClockOverride {
-  string simulated_time = 1;  // ISO 8601, empty = reset to system time
-}
-
-message RequestSystemReboot {
-  int32 delay_seconds = 1;
-}
-
-message UpdateNetworkConfig {
-  string new_ssid = 1;
-  string new_password = 2;
-}
-
-message AckRequest {
-  string device_id = 1;
-  string command_id = 2;
-  bool processed_successfully = 3;
-  string error_message = 4;
-}
-
-message AckResponse {
-  bool accepted = 1;
-}
 
 # File: src/content/v1/content.proto
 
@@ -302,7 +632,7 @@ message Media {
 import { Controller, Post, Param, Body, Get } from '@nestjs/common';
 import { ContentPublisherService } from './content-publisher.service';
 import { ContentMapper } from 'src/content/interfaces/content.mapper';
-import { ContentPackage } from 'src/generated/content';
+import { ContentPackage } from 'src/generated/content/v1/content';
 
 @Controller('content')
 export class ContentHttpController {
@@ -345,7 +675,7 @@ export class ContentHttpController {
 
 import { Injectable, OnModuleDestroy } from '@nestjs/common';
 import { Subject } from 'rxjs';
-import { ContentPackage } from 'src/generated/content';
+import { ContentPackage } from 'src/generated/content/v1/content';
 
 @Injectable()
 export class ContentPublisherService implements OnModuleDestroy {
@@ -461,7 +791,7 @@ import {
   ContentPackage,
   AckRequest,
   AckResponse,
-} from 'src/generated/content';
+} from 'src/generated/content/v1/content';
 
 @Controller()
 export class ContentController {
@@ -510,88 +840,106 @@ import { ContentPublisherService } from './content-publisher.service';
 export class ContentModule {}
 
 
-# File: src/content/content.proto
-
-// Copyright (c) Localize Technologies, Inc. All rights reserved.
-
-// Used in communication with hydrogen nodes for content synchronization and control
-// Connnection is long lived and bidirectional
-
-syntax = "proto3";
-
-package content.v1;
-
-service ContentService {
-  // Flutter calls this once to subscribe to content updates
-  rpc Subscribe(SubscribeRequest) returns (stream ContentPackage);
-  
-  // Unary call for acknowledgments (simpler than bidirectional)
-  rpc Acknowledge(AckRequest) returns (AckResponse);
-}
-
-message SubscribeRequest {
-  string device_id = 1;
-  string last_received_delivery_id = 2; // For resume/reconnect
-}
-
-message ContentPackage {
-  string delivery_id = 1;
-  Content content = 2;
-  repeated Media media = 3;
-  bool requires_ack = 4; // If true, client must acknowledge
-}
-
-message AckRequest {
-  string device_id = 1;
-  string delivery_id = 2;
-  bool processed_successfully = 3;
-  string error_message = 4; // If failed
-}
-
-message AckResponse {
-  bool accepted = 1;
-}
-
-// Types
-
-message Content {
-  int64 id = 1;
-  string hmac_signature = 2;
-  repeated TimeSlot time_slots = 3;
-  MediaRef fallback_media_ref = 4;
-  string created_at = 5;
-}
-
-message TimeSlot {
-  string id = 1;
-  string start_window = 2;
-  string end_window = 3;
-  repeated Campaign campaigns = 4;
-}
-
-message Campaign {
-  string id = 1;
-  int32 index = 2;
-  string media_id = 3;
-}
-
-message MediaRef {
-  string media_id = 1;
-}
-
-message Media {
-  string id = 1;
-  string checksum = 2;
-  string url = 3;
-}
-
-# File: src/generated/content.ts
+# File: src/generated/command/v1/command.ts
 
 // Code generated by protoc-gen-ts_proto. DO NOT EDIT.
 // versions:
 //   protoc-gen-ts_proto  v2.11.1
 //   protoc               v3.19.6
-// source: content.proto
+// source: command/v1/command.proto
+
+/* eslint-disable */
+import { GrpcMethod, GrpcStreamMethod } from "@nestjs/microservices";
+import { Observable } from "rxjs";
+
+export interface SubscribeRequest {
+  deviceId: string;
+}
+
+/** Strongly-typed command envelope */
+export interface CommandPackage {
+  commandId: string;
+  setClock?: SetClockOverride | undefined;
+  requestReboot?: RequestSystemReboot | undefined;
+  updateNetwork?:
+    | UpdateNetworkConfig
+    | undefined;
+  /** NEW */
+  rotateScreen?: RotateScreen | undefined;
+  requiresAck: boolean;
+  issuedAt: string;
+}
+
+/** Explicit command definitions (no JSON parsing needed) */
+export interface SetClockOverride {
+  /** ISO 8601, empty = reset to system time */
+  simulatedTime: string;
+}
+
+export interface RotateScreen {
+  /** "landscape", "portrait", "auto", "landscape_left", "landscape_right", "portrait_up", "portrait_down" */
+  orientation: string;
+  /** optional: also toggle fullscreen */
+  fullscreen: boolean;
+}
+
+export interface RequestSystemReboot {
+  delaySeconds: number;
+}
+
+export interface UpdateNetworkConfig {
+  newSsid: string;
+  newPassword: string;
+}
+
+export interface AckRequest {
+  deviceId: string;
+  commandId: string;
+  processedSuccessfully: boolean;
+  errorMessage: string;
+}
+
+export interface AckResponse {
+  accepted: boolean;
+}
+
+export interface RemoteCommandServiceClient {
+  subscribeCommands(request: SubscribeRequest): Observable<CommandPackage>;
+
+  acknowledgeCommand(request: AckRequest): Observable<AckResponse>;
+}
+
+export interface RemoteCommandServiceController {
+  subscribeCommands(request: SubscribeRequest): Observable<CommandPackage>;
+
+  acknowledgeCommand(request: AckRequest): Promise<AckResponse> | Observable<AckResponse> | AckResponse;
+}
+
+export function RemoteCommandServiceControllerMethods() {
+  return function (constructor: Function) {
+    const grpcMethods: string[] = ["subscribeCommands", "acknowledgeCommand"];
+    for (const method of grpcMethods) {
+      const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
+      GrpcMethod("RemoteCommandService", method)(constructor.prototype[method], method, descriptor);
+    }
+    const grpcStreamMethods: string[] = [];
+    for (const method of grpcStreamMethods) {
+      const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
+      GrpcStreamMethod("RemoteCommandService", method)(constructor.prototype[method], method, descriptor);
+    }
+  };
+}
+
+export const REMOTE_COMMAND_SERVICE_NAME = "RemoteCommandService";
+
+
+# File: src/generated/content/v1/content.ts
+
+// Code generated by protoc-gen-ts_proto. DO NOT EDIT.
+// versions:
+//   protoc-gen-ts_proto  v2.11.1
+//   protoc               v3.19.6
+// source: content/v1/content.proto
 
 /* eslint-disable */
 import { GrpcMethod, GrpcStreamMethod } from "@nestjs/microservices";
@@ -605,7 +953,7 @@ export interface SubscribeRequest {
 
 export interface ContentPackage {
   deliveryId: string;
-  content: Content | undefined;
+  content?: Content | undefined;
   media: Media[];
   /** If true, client must acknowledge */
   requiresAck: boolean;
@@ -627,7 +975,7 @@ export interface Content {
   id: number;
   hmacSignature: string;
   timeSlots: TimeSlot[];
-  fallbackMediaRef: MediaRef | undefined;
+  fallbackMediaRef?: MediaRef | undefined;
   createdAt: string;
 }
 
@@ -696,9 +1044,10 @@ export const CONTENT_SERVICE_NAME = "ContentService";
 
 import { Module } from '@nestjs/common';
 import { ContentModule } from './content/content.module';
+import { CommandModule } from './command/command.module';
 
 @Module({
-  imports: [ContentModule],
+  imports: [ContentModule, CommandModule],
 })
 export class AppModule {}
 
@@ -712,9 +1061,12 @@ import { join } from 'path';
 export const grpcClientOptions: GrpcOptions = {
   transport: Transport.GRPC,
   options: {
-    package: 'content.v1',
-    protoPath: join(__dirname, './content/content.proto'),
-    url: '0.0.0.0:50051', // Add this - accepts connections from any IP
+    package: ['content.v1', 'remote.v1'], // Both packages
+    protoPath: [
+      join(__dirname, './content/v1/content.proto'),
+      join(__dirname, './command/v1/command.proto'),
+    ],
+    url: '0.0.0.0:50051',
     onLoadPackageDefinition: (pkg, server) => {
       new ReflectionService(pkg).addToServer(server);
     },
@@ -752,3 +1104,136 @@ async function bootstrap() {
   console.log(`gRPC Server running, HTTP API on: ${await app.getUrl()}`);
 }
 bootstrap();
+
+
+# File: proto.sh
+
+#!/bin/bash
+
+set -e
+
+PROTO_DIR="src"
+OUT_DIR="src/generated"
+PLUGIN="./node_modules/.bin/protoc-gen-ts_proto"
+
+# ts_proto options
+OPTS=(
+    "--ts_proto_opt=nestJs=true"
+    "--ts_proto_opt=addGrpcMetadata=false"
+    "--ts_proto_opt=exportCommonSymbols=false"
+    "--ts_proto_opt=useOptionals=messages"
+)
+
+generate() {
+    echo "Generating TypeScript gRPC code..."
+    
+    # Find all proto files recursively
+    readarray -t proto_files < <(find "$PROTO_DIR" -name "*.proto" 2>/dev/null)
+    
+    if [ ${#proto_files[@]} -eq 0 ]; then
+        echo "No proto files found in $PROTO_DIR"
+        return 0
+    fi
+    
+    echo "Found ${#proto_files[@]} proto files:"
+    printf '  - %s\n' "${proto_files[@]}"
+    
+    mkdir -p "$OUT_DIR"
+    
+    # Generate all files at once (handles cross-file imports correctly)
+    protoc \
+    --plugin="$PLUGIN" \
+    --ts_proto_out="$OUT_DIR" \
+    "${OPTS[@]}" \
+    --proto_path="$PROTO_DIR" \
+    "${proto_files[@]}"
+    
+    echo "✅ Generated TypeScript files in $OUT_DIR"
+}
+
+watch_mode() {
+    if command -v inotifywait >/dev/null 2>&1; then
+        echo "👁️  Watching $PROTO_DIR for changes..."
+        while inotifywait -r -e modify,create,delete,move "$PROTO_DIR" --include=".*\.proto$" 2>/dev/null; do
+            sleep 0.5
+            generate
+        done
+        elif command -v fswatch >/dev/null 2>&1; then
+        echo "👁️  Watching $PROTO_DIR for changes..."
+        fswatch -o "$PROTO_DIR" | while read; do
+            generate
+        done
+    else
+        echo "❌ Error: Install inotifywait (Linux: apt install inotify-tools) or fswatch (macOS: brew install fswatch) for watch mode"
+        exit 1
+    fi
+}
+
+# Main
+if [ "$1" == "watch" ] || [ "$1" == "-w" ]; then
+    watch_mode
+else
+    generate
+fi
+
+# File: package.json
+
+{
+  "name": "nest-typescript-starter",
+  "version": "1.0.0",
+  "description": "Nest TypeScript starter repository",
+  "license": "MIT",
+  "scripts": {
+    "prebuild": "rimraf dist",
+    "build": "nest build",
+    "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
+    "start": "nest start",
+    "start:dev": "nest start --watch",
+    "start:debug": "nest start --debug --watch",
+    "start:prod": "node dist/main",
+    "lint": "eslint '{src,apps,libs,test}/**/*.ts' --fix",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:cov": "jest --coverage",
+    "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
+    "test:e2e": "echo 'No e2e tests implemented yet.'",
+    "proto:generate": "bash ./proto.sh"
+  },
+  "dependencies": {
+    "@grpc/grpc-js": "1.14.3",
+    "@grpc/reflection": "1.0.4",
+    "@nestjs/common": "11.1.12",
+    "@nestjs/core": "11.1.12",
+    "@nestjs/microservices": "11.1.12",
+    "@nestjs/platform-express": "11.1.12",
+    "class-transformer": "0.5.1",
+    "class-validator": "0.14.3",
+    "reflect-metadata": "0.2.2",
+    "rimraf": "6.1.2",
+    "rxjs": "7.8.2"
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "3.3.3",
+    "@eslint/js": "9.39.2",
+    "@nestjs/cli": "11.0.16",
+    "@nestjs/schematics": "11.0.9",
+    "@nestjs/testing": "11.1.12",
+    "@types/express": "5.0.6",
+    "@types/node": "24.10.9",
+    "@types/supertest": "6.0.3",
+    "eslint": "9.39.2",
+    "eslint-plugin-prettier": "5.5.5",
+    "globals": "17.2.0",
+    "jest": "30.2.0",
+    "prettier": "3.8.1",
+    "protobufjs": "^8.0.0",
+    "supertest": "7.2.2",
+    "ts-jest": "29.4.6",
+    "ts-loader": "9.5.4",
+    "ts-node": "10.9.2",
+    "ts-proto": "^2.11.1",
+    "tsconfig-paths": "4.2.0",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.54.0"
+  }
+}

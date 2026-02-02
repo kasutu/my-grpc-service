@@ -16,20 +16,25 @@ message SubscribeRequest {
 message CommandPackage {
   string command_id = 1;
   
-  // Oneof ensures only one command type is set (compile-time safety)
   oneof command {
     SetClockOverride set_clock = 2;
     RequestSystemReboot request_reboot = 3;
     UpdateNetworkConfig update_network = 4;
+    RotateScreen rotate_screen = 5;  // NEW
   }
   
-  bool requires_ack = 5;
-  string issued_at = 6;  // ISO 8601
+  bool requires_ack = 6;
+  string issued_at = 7;
 }
 
 // Explicit command definitions (no JSON parsing needed)
 message SetClockOverride {
   string simulated_time = 1;  // ISO 8601, empty = reset to system time
+}
+
+message RotateScreen {
+  string orientation = 1;  // "landscape", "portrait", "auto", "landscape_left", "landscape_right", "portrait_up", "portrait_down"
+  bool fullscreen = 2;     // optional: also toggle fullscreen
 }
 
 message RequestSystemReboot {
