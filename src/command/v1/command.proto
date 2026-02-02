@@ -1,0 +1,53 @@
+syntax = "proto3";
+
+package remote.v1;
+
+
+service RemoteCommandService {
+  rpc SubscribeCommands(SubscribeRequest) returns (stream CommandPackage);
+  rpc AcknowledgeCommand(AckRequest) returns (AckResponse);
+}
+
+message SubscribeRequest {
+  string device_id = 1;
+}
+
+// Strongly-typed command envelope
+message CommandPackage {
+  string command_id = 1;
+  
+  // Oneof ensures only one command type is set (compile-time safety)
+  oneof command {
+    SetClockOverride set_clock = 2;
+    RequestSystemReboot request_reboot = 3;
+    UpdateNetworkConfig update_network = 4;
+  }
+  
+  bool requires_ack = 5;
+  string issued_at = 6;  // ISO 8601
+}
+
+// Explicit command definitions (no JSON parsing needed)
+message SetClockOverride {
+  string simulated_time = 1;  // ISO 8601, empty = reset to system time
+}
+
+message RequestSystemReboot {
+  int32 delay_seconds = 1;
+}
+
+message UpdateNetworkConfig {
+  string new_ssid = 1;
+  string new_password = 2;
+}
+
+message AckRequest {
+  string device_id = 1;
+  string command_id = 2;
+  bool processed_successfully = 3;
+  string error_message = 4;
+}
+
+message AckResponse {
+  bool accepted = 1;
+}

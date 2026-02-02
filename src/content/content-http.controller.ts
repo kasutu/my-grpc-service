@@ -1,7 +1,7 @@
 import { Controller, Post, Param, Body, Get } from '@nestjs/common';
 import { ContentPublisherService } from './content-publisher.service';
 import { ContentMapper } from 'src/content/interfaces/content.mapper';
-import { ContentPackage } from 'src/generated/content';
+import { ContentPackage } from 'src/generated/content/v1/content';
 
 @Controller('content')
 export class ContentHttpController {

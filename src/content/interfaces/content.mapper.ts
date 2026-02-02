@@ -5,7 +5,7 @@ import {
   Campaign,
   MediaRef,
   Media,
-} from 'src/generated/content';
+} from 'src/generated/content/v1/content';
 
 export class ContentMapper {
   static toContentPackage(json: any): ContentPackage {

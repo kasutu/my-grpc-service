@@ -7,7 +7,7 @@ import {
   ContentPackage,
   AckRequest,
   AckResponse,
-} from 'src/generated/content';
+} from 'src/generated/content/v1/content';
 
 @Controller()
 export class ContentController {

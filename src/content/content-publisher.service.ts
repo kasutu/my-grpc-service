@@ -1,6 +1,6 @@
 import { Injectable, OnModuleDestroy } from '@nestjs/common';
 import { Subject } from 'rxjs';
-import { ContentPackage } from 'src/generated/content';
+import { ContentPackage } from 'src/generated/content/v1/content';
 
 @Injectable()
 export class ContentPublisherService implements OnModuleDestroy {

@@ -22,7 +22,7 @@ async function bootstrap() {
   app.connectMicroservice<MicroserviceOptions>(grpcClientOptions);
 
   await app.startAllMicroservices();
-  await app.listen(3001);
+  await app.listen(31691);
   console.log(`gRPC Server running, HTTP API on: ${await app.getUrl()}`);
 }
 bootstrap();

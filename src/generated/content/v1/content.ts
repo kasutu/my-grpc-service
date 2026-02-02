@@ -2,7 +2,7 @@
 // versions:
 //   protoc-gen-ts_proto  v2.11.1
 //   protoc               v3.19.6
-// source: content.proto
+// source: content/v1/content.proto
 
 /* eslint-disable */
 import { GrpcMethod, GrpcStreamMethod } from "@nestjs/microservices";
@@ -16,7 +16,7 @@ export interface SubscribeRequest {
 
 export interface ContentPackage {
   deliveryId: string;
-  content: Content | undefined;
+  content?: Content | undefined;
   media: Media[];
   /** If true, client must acknowledge */
   requiresAck: boolean;
@@ -38,7 +38,7 @@ export interface Content {
   id: number;
   hmacSignature: string;
   timeSlots: TimeSlot[];
-  fallbackMediaRef: MediaRef | undefined;
+  fallbackMediaRef?: MediaRef | undefined;
   createdAt: string;
 }
 

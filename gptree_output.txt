@@ -4,25 +4,22 @@
 │   └── communications/
 │       └── generated/
 ├── src/
+│   ├── command/
+│   │   └── v1/
+│   │       └── command.proto
 │   ├── content/
 │   │   ├── interfaces/
-│   │   │   ├── ack-request.interface.ts
-│   │   │   ├── ack-response.interface.ts
-│   │   │   ├── campaign.interface.ts
-│   │   │   ├── client-message.interface.ts
-│   │   │   ├── content-package.interface.ts
-│   │   │   ├── content.interface.ts
-│   │   │   ├── media.interface.ts
-│   │   │   ├── mediaref.interface.ts
-│   │   │   ├── server-message.interface.ts
-│   │   │   ├── subscribe-request.interface.ts
-│   │   │   └── timeslot.interface.ts
+│   │   │   └── content.mapper.ts
+│   │   ├── v1/
+│   │   │   ├── command.proto
+│   │   │   └── content.proto
 │   │   ├── content-http.controller.ts
 │   │   ├── content-publisher.service.ts
 │   │   ├── content.controller.ts
 │   │   ├── content.module.ts
 │   │   └── content.proto
 │   ├── generated/
+│   │   └── content.ts
 │   ├── app.module.ts
 │   ├── grpc-client.options.ts
 │   └── main.ts
@@ -31,75 +28,625 @@
 ├── gptree_output.txt
 ├── nest-cli.json
 ├── package.json
-├── proto.sh
 ├── tsconfig.build.json
 └── tsconfig.json
 
 # BEGIN FILE CONTENTS
 
-# File: src/content/interfaces/ack-request.interface.ts
+# File: src/command/v1/command.proto
 
-export interface AckRequest {
-  device_id: string;
-  delivery_id: number;
-  processed_successfully: boolean;
-  error_message?: string;
+syntax = "proto3";
+
+package remote.v1;
+
+
+service RemoteCommandService {
+  rpc SubscribeCommands(SubscribeRequest) returns (stream CommandPackage);
+  rpc AcknowledgeCommand(AckRequest) returns (AckResponse);
+}
+
+message SubscribeRequest {
+  string device_id = 1;
+}
+
+// Strongly-typed command envelope
+message CommandPackage {
+  string command_id = 1;
+  
+  // Oneof ensures only one command type is set (compile-time safety)
+  oneof command {
+    SetClockOverride set_clock = 2;
+    RequestSystemReboot request_reboot = 3;
+    UpdateNetworkConfig update_network = 4;
+  }
+  
+  bool requires_ack = 5;
+  string issued_at = 6;  // ISO 8601
+}
+
+// Explicit command definitions (no JSON parsing needed)
+message SetClockOverride {
+  string simulated_time = 1;  // ISO 8601, empty = reset to system time
+}
+
+message RequestSystemReboot {
+  int32 delay_seconds = 1;
+}
+
+message UpdateNetworkConfig {
+  string new_ssid = 1;
+  string new_password = 2;
+}
+
+message AckRequest {
+  string device_id = 1;
+  string command_id = 2;
+  bool processed_successfully = 3;
+  string error_message = 4;
+}
+
+message AckResponse {
+  bool accepted = 1;
+}
+
+# File: src/content/interfaces/content.mapper.ts
+
+import {
+  ContentPackage,
+  Content,
+  TimeSlot,
+  Campaign,
+  MediaRef,
+  Media,
+} from 'src/generated/content';
+
+export class ContentMapper {
+  static toContentPackage(json: any): ContentPackage {
+    return {
+      deliveryId: json.delivery_id?.toString() ?? '',
+      requiresAck: json.requires_ack ?? false,
+      content: this.toContent(json.content),
+      media: (json.media ?? []).map((m: any) => this.toMedia(m)),
+    };
+  }
+
+  private static toContent(json: any): Content {
+    return {
+      id: json.id ?? 0,
+      hmacSignature: json.hmac_signature ?? '',
+      createdAt: json.created_at ?? '',
+      fallbackMediaRef: this.toMediaRef(json.fallback_media_ref),
+      timeSlots: (json.time_slots ?? []).map((slot: any) =>
+        this.toTimeSlot(slot),
+      ),
+    };
+  }
+
+  private static toTimeSlot(json: any): TimeSlot {
+    return {
+      id: json.id ?? '',
+      startWindow: json.start_window ?? '',
+      endWindow: json.end_window ?? '',
+      campaigns: (json.campaigns ?? []).map((camp: any) =>
+        this.toCampaign(camp),
+      ),
+    };
+  }
+
+  private static toCampaign(json: any): Campaign {
+    return {
+      id: json.id ?? '',
+      index: json.index ?? 0,
+      mediaId: json.media_id ?? '',
+    };
+  }
+
+  private static toMediaRef(json: any): MediaRef {
+    return {
+      mediaId: json?.media_id ?? '',
+    };
+  }
+
+  private static toMedia(json: any): Media {
+    return {
+      id: json.id ?? '',
+      checksum: json.checksum ?? '',
+      url: json.url ?? '',
+    };
+  }
+
+  static toAckRequest(json: any) {
+    return {
+      deviceId: json.device_id ?? '',
+      deliveryId: json.delivery_id?.toString() ?? '',
+      processedSuccessfully: json.processed_successfully ?? false,
+      errorMessage: json.error_message,
+    };
+  }
 }
 
 
-# File: src/content/interfaces/ack-response.interface.ts
+# File: src/content/v1/command.proto
+
+syntax = "proto3";
+
+package remote.v1;
+
+
+service RemoteCommandService {
+  rpc SubscribeCommands(SubscribeRequest) returns (stream CommandPackage);
+  rpc AcknowledgeCommand(AckRequest) returns (AckResponse);
+}
+
+message SubscribeRequest {
+  string device_id = 1;
+}
+
+// Strongly-typed command envelope
+message CommandPackage {
+  string command_id = 1;
+  
+  // Oneof ensures only one command type is set (compile-time safety)
+  oneof command {
+    SetClockOverride set_clock = 2;
+    RequestSystemReboot request_reboot = 3;
+    UpdateNetworkConfig update_network = 4;
+  }
+  
+  bool requires_ack = 5;
+  string issued_at = 6;  // ISO 8601
+}
+
+// Explicit command definitions (no JSON parsing needed)
+message SetClockOverride {
+  string simulated_time = 1;  // ISO 8601, empty = reset to system time
+}
+
+message RequestSystemReboot {
+  int32 delay_seconds = 1;
+}
+
+message UpdateNetworkConfig {
+  string new_ssid = 1;
+  string new_password = 2;
+}
+
+message AckRequest {
+  string device_id = 1;
+  string command_id = 2;
+  bool processed_successfully = 3;
+  string error_message = 4;
+}
+
+message AckResponse {
+  bool accepted = 1;
+}
+
+# File: src/content/v1/content.proto
+
+// Copyright (c) Localize Technologies, Inc. All rights reserved.
+
+// Used in communication with hydrogen nodes for content synchronization and control
+// Connnection is long lived and bidirectional
+
+syntax = "proto3";
+
+package content.v1;
+
+service ContentService {
+  // Flutter calls this once to subscribe to content updates
+  rpc Subscribe(SubscribeRequest) returns (stream ContentPackage);
+  
+  // Unary call for acknowledgments (simpler than bidirectional)
+  rpc Acknowledge(AckRequest) returns (AckResponse);
+}
+
+message SubscribeRequest {
+  string device_id = 1;
+  string last_received_delivery_id = 2; // For resume/reconnect
+}
+
+message ContentPackage {
+  string delivery_id = 1;
+  Content content = 2;
+  repeated Media media = 3;
+  bool requires_ack = 4; // If true, client must acknowledge
+}
+
+message AckRequest {
+  string device_id = 1;
+  string delivery_id = 2;
+  bool processed_successfully = 3;
+  string error_message = 4; // If failed
+}
+
+message AckResponse {
+  bool accepted = 1;
+}
+
+// Types
+
+message Content {
+  int64 id = 1;
+  string hmac_signature = 2;
+  repeated TimeSlot time_slots = 3;
+  MediaRef fallback_media_ref = 4;
+  string created_at = 5;
+}
+
+message TimeSlot {
+  string id = 1;
+  string start_window = 2;
+  string end_window = 3;
+  repeated Campaign campaigns = 4;
+}
+
+message Campaign {
+  string id = 1;
+  int32 index = 2;
+  string media_id = 3;
+}
+
+message MediaRef {
+  string media_id = 1;
+}
+
+message Media {
+  string id = 1;
+  string checksum = 2;
+  string url = 3;
+}
+
+# File: src/content/content-http.controller.ts
+
+import { Controller, Post, Param, Body, Get } from '@nestjs/common';
+import { ContentPublisherService } from './content-publisher.service';
+import { ContentMapper } from 'src/content/interfaces/content.mapper';
+import { ContentPackage } from 'src/generated/content';
+
+@Controller('content')
+export class ContentHttpController {
+  constructor(private readonly publisher: ContentPublisherService) {}
+
+  @Post('push/:deviceId')
+  pushToDevice(@Param('deviceId') deviceId: string, @Body() body: any) {
+    // Convert snake_case JSON to camelCase interface
+    const contentPackage: ContentPackage = ContentMapper.toContentPackage(body);
+
+    console.log(`Mapped deliveryId: ${contentPackage.deliveryId}`);
+
+    const success = this.publisher.publishToDevice(deviceId, contentPackage);
+    return {
+      success,
+      message: success
+        ? `Pushed to ${deviceId}`
+        : `Device ${deviceId} not connected`,
+      mappedId: contentPackage.deliveryId,
+    };
+  }
+
+  @Post('broadcast')
+  broadcast(@Body() body: any) {
+    const contentPackage = ContentMapper.toContentPackage(body);
+    this.publisher.broadcast(contentPackage);
+    return { success: true, message: 'Broadcast sent' };
+  }
+
+  @Get('stats')
+  getStats() {
+    return {
+      connected_devices: this.publisher.getConnectedCount(),
+    };
+  }
+}
+
+
+# File: src/content/content-publisher.service.ts
+
+import { Injectable, OnModuleDestroy } from '@nestjs/common';
+import { Subject } from 'rxjs';
+import { ContentPackage } from 'src/generated/content';
+
+@Injectable()
+export class ContentPublisherService implements OnModuleDestroy {
+  private readonly subscriptions = new Map<string, Subject<ContentPackage>>();
+  private readonly pendingAcks = new Map<string, Set<string>>();
+
+  subscribe(
+    deviceId: string,
+    lastDeliveryId?: string,
+  ): Subject<ContentPackage> {
+    // Cleanup existing subscription if present
+    if (this.subscriptions.has(deviceId)) {
+      console.log(
+        `⚠️ Device ${deviceId} already subscribed, replacing connection`,
+      );
+      this.subscriptions.get(deviceId)?.complete();
+    }
+
+    const stream$ = new Subject<ContentPackage>();
+    this.subscriptions.set(deviceId, stream$);
+
+    console.log(
+      `📱 Device ${deviceId} subscribed (total: ${this.subscriptions.size})`,
+    );
+
+    // Handle resume logic here if needed
+    if (lastDeliveryId) {
+      console.log(`🔄 Resuming from delivery ${lastDeliveryId}`);
+    }
+
+    return stream$;
+  }
+
+  unsubscribe(deviceId: string) {
+    console.log(`👋 Device ${deviceId} unsubscribed`);
+    this.subscriptions.delete(deviceId);
+    this.pendingAcks.delete(deviceId);
+  }
+
+  acknowledge(
+    deviceId: string,
+    deliveryId: string,
+    success: boolean,
+    errorMsg?: string,
+  ) {
+    console.log(
+      `✅ Ack from ${deviceId} for ${deliveryId}: ${success ? 'success' : 'failed'}`,
+    );
+
+    if (!success && errorMsg) {
+      console.error(`   Error: ${errorMsg}`);
+    }
+
+    const devicePending = this.pendingAcks.get(deviceId);
+    if (devicePending) {
+      devicePending.delete(deliveryId);
+    }
+
+    return { accepted: true };
+  }
+
+  publishToDevice(deviceId: string, contentPackage: ContentPackage) {
+    const stream$ = this.subscriptions.get(deviceId);
+
+    if (stream$ && !stream$.closed) {
+      stream$.next(contentPackage);
+      console.log(`📤 Published ${contentPackage.deliveryId} to ${deviceId}`);
+
+      if (contentPackage.requiresAck) {
+        if (!this.pendingAcks.has(deviceId)) {
+          this.pendingAcks.set(deviceId, new Set());
+        }
+        this.pendingAcks.get(deviceId)?.add(contentPackage.deliveryId);
+      }
+      return true;
+    } else {
+      console.log(`❌ Device ${deviceId} not connected`);
+      return false;
+    }
+  }
+
+  broadcast(contentPackage: ContentPackage) {
+    console.log(`📢 Broadcasting to ${this.subscriptions.size} devices`);
+    for (const [deviceId, stream$] of this.subscriptions) {
+      if (!stream$.closed) {
+        stream$.next(contentPackage);
+      }
+    }
+  }
+
+  getConnectedCount(): number {
+    return this.subscriptions.size;
+  }
+
+  onModuleDestroy() {
+    // Cleanup all subscriptions on shutdown
+    for (const [deviceId, stream$] of this.subscriptions) {
+      stream$.complete();
+    }
+    this.subscriptions.clear();
+  }
+}
+
+
+# File: src/content/content.controller.ts
+
+import { Controller } from '@nestjs/common';
+import { GrpcMethod } from '@nestjs/microservices';
+import { Observable, Subject } from 'rxjs';
+import { ContentPublisherService } from './content-publisher.service';
+import {
+  SubscribeRequest,
+  ContentPackage,
+  AckRequest,
+  AckResponse,
+} from 'src/generated/content';
+
+@Controller()
+export class ContentController {
+  constructor(private readonly publisher: ContentPublisherService) {}
+
+  @GrpcMethod('ContentService')
+  subscribe(request: SubscribeRequest): Observable<ContentPackage> {
+    const stream$ = this.publisher.subscribe(
+      request.deviceId,
+      request.lastReceivedDeliveryId,
+    );
+
+    // Cleanup on disconnect
+    stream$.subscribe({
+      complete: () => {
+        this.publisher.unsubscribe(request.deviceId);
+      },
+    });
+
+    return stream$.asObservable();
+  }
+
+  @GrpcMethod('ContentService')
+  acknowledge(request: AckRequest): AckResponse {
+    return this.publisher.acknowledge(
+      request.deviceId,
+      request.deliveryId,
+      request.processedSuccessfully,
+      request.errorMessage,
+    );
+  }
+}
+
+
+# File: src/content/content.module.ts
+
+import { Module } from '@nestjs/common';
+import { ContentController } from './content.controller';
+import { ContentHttpController } from './content-http.controller';
+import { ContentPublisherService } from './content-publisher.service';
+
+@Module({
+  providers: [ContentPublisherService],
+  controllers: [ContentController, ContentHttpController],
+})
+export class ContentModule {}
+
+
+# File: src/content/content.proto
+
+// Copyright (c) Localize Technologies, Inc. All rights reserved.
+
+// Used in communication with hydrogen nodes for content synchronization and control
+// Connnection is long lived and bidirectional
+
+syntax = "proto3";
+
+package content.v1;
+
+service ContentService {
+  // Flutter calls this once to subscribe to content updates
+  rpc Subscribe(SubscribeRequest) returns (stream ContentPackage);
+  
+  // Unary call for acknowledgments (simpler than bidirectional)
+  rpc Acknowledge(AckRequest) returns (AckResponse);
+}
+
+message SubscribeRequest {
+  string device_id = 1;
+  string last_received_delivery_id = 2; // For resume/reconnect
+}
+
+message ContentPackage {
+  string delivery_id = 1;
+  Content content = 2;
+  repeated Media media = 3;
+  bool requires_ack = 4; // If true, client must acknowledge
+}
+
+message AckRequest {
+  string device_id = 1;
+  string delivery_id = 2;
+  bool processed_successfully = 3;
+  string error_message = 4; // If failed
+}
+
+message AckResponse {
+  bool accepted = 1;
+}
+
+// Types
+
+message Content {
+  int64 id = 1;
+  string hmac_signature = 2;
+  repeated TimeSlot time_slots = 3;
+  MediaRef fallback_media_ref = 4;
+  string created_at = 5;
+}
+
+message TimeSlot {
+  string id = 1;
+  string start_window = 2;
+  string end_window = 3;
+  repeated Campaign campaigns = 4;
+}
+
+message Campaign {
+  string id = 1;
+  int32 index = 2;
+  string media_id = 3;
+}
+
+message MediaRef {
+  string media_id = 1;
+}
+
+message Media {
+  string id = 1;
+  string checksum = 2;
+  string url = 3;
+}
+
+# File: src/generated/content.ts
+
+// Code generated by protoc-gen-ts_proto. DO NOT EDIT.
+// versions:
+//   protoc-gen-ts_proto  v2.11.1
+//   protoc               v3.19.6
+// source: content.proto
+
+/* eslint-disable */
+import { GrpcMethod, GrpcStreamMethod } from "@nestjs/microservices";
+import { Observable } from "rxjs";
+
+export interface SubscribeRequest {
+  deviceId: string;
+  /** For resume/reconnect */
+  lastReceivedDeliveryId: string;
+}
+
+export interface ContentPackage {
+  deliveryId: string;
+  content: Content | undefined;
+  media: Media[];
+  /** If true, client must acknowledge */
+  requiresAck: boolean;
+}
+
+export interface AckRequest {
+  deviceId: string;
+  deliveryId: string;
+  processedSuccessfully: boolean;
+  /** If failed */
+  errorMessage: string;
+}
 
 export interface AckResponse {
   accepted: boolean;
 }
 
+export interface Content {
+  id: number;
+  hmacSignature: string;
+  timeSlots: TimeSlot[];
+  fallbackMediaRef: MediaRef | undefined;
+  createdAt: string;
+}
 
-# File: src/content/interfaces/campaign.interface.ts
+export interface TimeSlot {
+  id: string;
+  startWindow: string;
+  endWindow: string;
+  campaigns: Campaign[];
+}
 
 export interface Campaign {
   id: string;
   index: number;
-  media_id: string;
+  mediaId: string;
 }
 
-
-# File: src/content/interfaces/client-message.interface.ts
-
-export interface ClientMessage {
-  deviceId: string; // was device_id
-  readyForContent: boolean; // was ready_for_content
-  timestamp: string;
+export interface MediaRef {
+  mediaId: string;
 }
-
-
-# File: src/content/interfaces/content-package.interface.ts
-
-import { Content } from './content.interface';
-import { Media } from './media.interface';
-
-export interface ContentPackage {
-  delivery_id: number;
-  content: Content;
-  media: Media[];
-  requires_ack?: boolean;
-}
-
-
-# File: src/content/interfaces/content.interface.ts
-
-import { MediaRef } from 'src/content/interfaces/mediaref.interface';
-import { TimeSlot } from 'src/content/interfaces/timeslot.interface';
-
-export interface Content {
-  id: number;
-  hmac_signature: string;
-  time_slots: TimeSlot[];
-  fallback_media_ref: MediaRef;
-  created_at: string;
-}
-
-
-# File: src/content/interfaces/media.interface.ts
 
 export interface Media {
   id: string;
@@ -107,40 +654,101 @@ export interface Media {
   url: string;
 }
 
+export interface ContentServiceClient {
+  /** Flutter calls this once to subscribe to content updates */
 
-# File: src/content/interfaces/mediaref.interface.ts
+  subscribe(request: SubscribeRequest): Observable<ContentPackage>;
 
-export interface MediaRef {
-  media_id: string;
+  /** Unary call for acknowledgments (simpler than bidirectional) */
+
+  acknowledge(request: AckRequest): Observable<AckResponse>;
 }
 
+export interface ContentServiceController {
+  /** Flutter calls this once to subscribe to content updates */
 
-# File: src/content/interfaces/server-message.interface.ts
+  subscribe(request: SubscribeRequest): Observable<ContentPackage>;
 
-import { ContentPackage } from './content-package.interface';
+  /** Unary call for acknowledgments (simpler than bidirectional) */
 
-export interface ServerMessage {
-  content_push?: ContentPackage;
-  heartbeat?: string;
-  error?: string;
+  acknowledge(request: AckRequest): Promise<AckResponse> | Observable<AckResponse> | AckResponse;
 }
 
-
-# File: src/content/interfaces/subscribe-request.interface.ts
-
-export interface SubscribeRequest {
-  deviceId: string;
-  lastReceivedDeliveryId?: string;
+export function ContentServiceControllerMethods() {
+  return function (constructor: Function) {
+    const grpcMethods: string[] = ["subscribe", "acknowledge"];
+    for (const method of grpcMethods) {
+      const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
+      GrpcMethod("ContentService", method)(constructor.prototype[method], method, descriptor);
+    }
+    const grpcStreamMethods: string[] = [];
+    for (const method of grpcStreamMethods) {
+      const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
+      GrpcStreamMethod("ContentService", method)(constructor.prototype[method], method, descriptor);
+    }
+  };
 }
 
+export const CONTENT_SERVICE_NAME = "ContentService";
 
-# File: src/content/interfaces/timeslot.interface.ts
 
-import { Campaign } from 'src/content/interfaces/campaign.interface';
+# File: src/app.module.ts
 
-export interface TimeSlot {
-  id: string;
-  start_window: string;
-  end_window: string;
-  campaigns: Campaign[];
+import { Module } from '@nestjs/common';
+import { ContentModule } from './content/content.module';
+
+@Module({
+  imports: [ContentModule],
+})
+export class AppModule {}
+
+
+# File: src/grpc-client.options.ts
+
+import { ReflectionService } from '@grpc/reflection';
+import { GrpcOptions, Transport } from '@nestjs/microservices';
+import { join } from 'path';
+
+export const grpcClientOptions: GrpcOptions = {
+  transport: Transport.GRPC,
+  options: {
+    package: 'content.v1',
+    protoPath: join(__dirname, './content/content.proto'),
+    url: '0.0.0.0:50051', // Add this - accepts connections from any IP
+    onLoadPackageDefinition: (pkg, server) => {
+      new ReflectionService(pkg).addToServer(server);
+    },
+  },
+};
+
+
+# File: src/main.ts
+
+import { NestFactory } from '@nestjs/core';
+import { MicroserviceOptions } from '@nestjs/microservices';
+import { AppModule } from './app.module';
+import { grpcClientOptions } from './grpc-client.options';
+
+async function bootstrap() {
+  /**
+   * This example contains a hybrid application (HTTP + gRPC)
+   * You can switch to a microservice with NestFactory.createMicroservice() as follows:
+   *
+   * const app = await NestFactory.createMicroservice<MicroserviceOptions>(AppModule, {
+   *  transport: Transport.GRPC,
+   *  options: {
+   *    package: 'hero',
+   *    protoPath: join(__dirname, './hero/hero.proto'),
+   *  }
+   * });
+   * await app.listen();
+   *
+   */
+  const app = await NestFactory.create(AppModule);
+  app.connectMicroservice<MicroserviceOptions>(grpcClientOptions);
+
+  await app.startAllMicroservices();
+  await app.listen(31691);
+  console.log(`gRPC Server running, HTTP API on: ${await app.getUrl()}`);
 }
+bootstrap();
