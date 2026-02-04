@@ -6,5 +6,6 @@ import { ContentPublisherService } from './content-publisher.service';
 @Module({
   providers: [ContentPublisherService],
   controllers: [ContentController, ContentHttpController],
+  exports: [ContentPublisherService],
 })
 export class ContentModule {}

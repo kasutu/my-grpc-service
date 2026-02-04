@@ -6,5 +6,6 @@ import { CommandHttpController } from './command-http.controller';
 @Module({
   providers: [CommandPublisherService],
   controllers: [CommandController, CommandHttpController],
+  exports: [CommandPublisherService],
 })
 export class CommandModule {}

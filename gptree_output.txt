@@ -47,6 +47,7 @@ import {
   SetClockOverride,
   RequestSystemReboot,
   UpdateNetworkConfig,
+  RotateScreen,
   AckRequest,
 } from 'src/generated/command/v1/command';
 
@@ -56,7 +57,6 @@ export class CommandMapper {
       commandId: json.command_id?.toString() ?? '',
       requiresAck: json.requires_ack ?? false,
       issuedAt: json.issued_at ?? new Date().toISOString(),
-      // oneof fields - only one should be present
       setClock: json.set_clock
         ? this.toSetClockOverride(json.set_clock)
         : undefined,
@@ -65,6 +65,9 @@ export class CommandMapper {
         : undefined,
       updateNetwork: json.update_network
         ? this.toUpdateNetworkConfig(json.update_network)
+        : undefined,
+      rotateScreen: json.rotate_screen
+        ? this.toRotateScreen(json.rotate_screen)
         : undefined,
     };
   }
@@ -88,6 +91,14 @@ export class CommandMapper {
     };
   }
 
+  // ADD THIS METHOD
+  private static toRotateScreen(json: any): RotateScreen {
+    return {
+      orientation: json.orientation ?? 'auto',
+      fullscreen: json.fullscreen ?? false,
+    };
+  }
+
   static toAckRequest(json: any): AckRequest {
     return {
       deviceId: json.device_id ?? '',
@@ -97,13 +108,19 @@ export class CommandMapper {
     };
   }
 
-  // Helper to determine which command type is present
+  // Update return type to include rotateScreen
   static getCommandType(
     pkg: CommandPackage,
-  ): 'setClock' | 'requestReboot' | 'updateNetwork' | 'unknown' {
+  ):
+    | 'setClock'
+    | 'requestReboot'
+    | 'updateNetwork'
+    | 'rotateScreen'
+    | 'unknown' {
     if (pkg.setClock) return 'setClock';
     if (pkg.requestReboot) return 'requestReboot';
     if (pkg.updateNetwork) return 'updateNetwork';
+    if (pkg.rotateScreen) return 'rotateScreen';
     return 'unknown';
   }
 }
@@ -279,6 +296,49 @@ export class CommandHttpController {
   getStats() {
     return {
       connected_devices: this.publisher.getConnectedCount(),
+    };
+  }
+
+  @Post('rotate/:deviceId')
+  rotateScreen(@Param('deviceId') deviceId: string, @Body() body: any) {
+    const command = CommandMapper.toCommandPackage({
+      command_id: `rotate-${Date.now()}`,
+      requires_ack: true,
+      issued_at: new Date().toISOString(),
+      rotate_screen: {
+        orientation: body.orientation ?? 'auto',
+        fullscreen: body.fullscreen ?? null,
+      },
+    });
+
+    const success = this.publisher.sendCommand(deviceId, command);
+    return {
+      success,
+      message: success
+        ? `Rotate command sent to ${deviceId}`
+        : `Device ${deviceId} not connected`,
+      commandId: command.commandId,
+      orientation: body.orientation,
+    };
+  }
+
+  @Post('broadcast/rotate')
+  broadcastRotate(@Body() body: any) {
+    const command = CommandMapper.toCommandPackage({
+      command_id: `rotate-broadcast-${Date.now()}`,
+      requires_ack: false,
+      issued_at: new Date().toISOString(),
+      rotate_screen: {
+        orientation: body.orientation ?? 'auto',
+        fullscreen: body.fullscreen ?? null,
+      },
+    });
+
+    this.publisher.broadcastCommand(command);
+    return {
+      success: true,
+      message: 'Rotate broadcast sent',
+      orientation: body.orientation,
     };
   }
 }
@@ -1106,75 +1166,26 @@ async function bootstrap() {
 bootstrap();
 
 
-# File: proto.sh
+# File: tsconfig.json
 
-#!/bin/bash
-
-set -e
-
-PROTO_DIR="src"
-OUT_DIR="src/generated"
-PLUGIN="./node_modules/.bin/protoc-gen-ts_proto"
-
-# ts_proto options
-OPTS=(
-    "--ts_proto_opt=nestJs=true"
-    "--ts_proto_opt=addGrpcMetadata=false"
-    "--ts_proto_opt=exportCommonSymbols=false"
-    "--ts_proto_opt=useOptionals=messages"
-)
-
-generate() {
-    echo "Generating TypeScript gRPC code..."
-    
-    # Find all proto files recursively
-    readarray -t proto_files < <(find "$PROTO_DIR" -name "*.proto" 2>/dev/null)
-    
-    if [ ${#proto_files[@]} -eq 0 ]; then
-        echo "No proto files found in $PROTO_DIR"
-        return 0
-    fi
-    
-    echo "Found ${#proto_files[@]} proto files:"
-    printf '  - %s\n' "${proto_files[@]}"
-    
-    mkdir -p "$OUT_DIR"
-    
-    # Generate all files at once (handles cross-file imports correctly)
-    protoc \
-    --plugin="$PLUGIN" \
-    --ts_proto_out="$OUT_DIR" \
-    "${OPTS[@]}" \
-    --proto_path="$PROTO_DIR" \
-    "${proto_files[@]}"
-    
-    echo "✅ Generated TypeScript files in $OUT_DIR"
+{
+  "compilerOptions": {
+    "module": "commonjs",
+    "declaration": true,
+    "removeComments": true,
+    "emitDecoratorMetadata": true,
+    "experimentalDecorators": true,
+    "allowSyntheticDefaultImports": true,
+    "target": "ES2021",
+    "sourceMap": true,
+    "outDir": "./dist",
+    "baseUrl": "./",
+    "incremental": true,
+    "skipLibCheck": true
+  },
+  "include": ["src/**/*"]
 }
 
-watch_mode() {
-    if command -v inotifywait >/dev/null 2>&1; then
-        echo "👁️  Watching $PROTO_DIR for changes..."
-        while inotifywait -r -e modify,create,delete,move "$PROTO_DIR" --include=".*\.proto$" 2>/dev/null; do
-            sleep 0.5
-            generate
-        done
-        elif command -v fswatch >/dev/null 2>&1; then
-        echo "👁️  Watching $PROTO_DIR for changes..."
-        fswatch -o "$PROTO_DIR" | while read; do
-            generate
-        done
-    else
-        echo "❌ Error: Install inotifywait (Linux: apt install inotify-tools) or fswatch (macOS: brew install fswatch) for watch mode"
-        exit 1
-    fi
-}
-
-# Main
-if [ "$1" == "watch" ] || [ "$1" == "-w" ]; then
-    watch_mode
-else
-    generate
-fi
 
 # File: package.json
 
