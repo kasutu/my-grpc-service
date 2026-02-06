@@ -1,4 +1,4 @@
-import {
+import type {
   ContentPackage,
   Content,
   TimeSlot,

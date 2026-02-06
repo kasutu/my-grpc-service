@@ -2,7 +2,7 @@ import { Controller } from '@nestjs/common';
 import { GrpcMethod } from '@nestjs/microservices';
 import { Observable, Subject } from 'rxjs';
 import { CommandPublisherService } from './command-publisher.service';
-import {
+import type {
   SubscribeRequest,
   CommandPackage,
   AckRequest,

@@ -1,10 +1,10 @@
 // File: src/fleet/fleet.service.ts
 import { Injectable, Logger } from '@nestjs/common';
-import { CommandPublisherService } from '../command/command-publisher.service';
+import { CommandPublisherService, AckResult } from '../command/command-publisher.service';
 import { ContentPublisherService } from '../content/content-publisher.service';
-import { CommandPackage } from '../generated/command/v1/command';
-import { ContentPackage } from '../generated/content/v1/content';
-import {
+import type { CommandPackage } from '../generated/command/v1/command';
+import type { ContentPackage } from '../generated/content/v1/content';
+import type {
   Fleet,
   FleetMember,
   FleetBroadcastResult,
@@ -12,6 +12,10 @@ import {
   UpdateFleetDto,
 } from './interfaces/fleet.types';
 import { CommandMapper } from '../command/interfaces/command.mapper';
+
+export interface FleetCommandResult extends FleetBroadcastResult {
+  ackResults: AckResult[];
+}
 
 @Injectable()
 export class FleetService {
@@ -161,19 +165,21 @@ export class FleetService {
   async broadcastCommand(
     fleetId: string,
     commandBuilder: (deviceId: string) => CommandPackage,
-  ): Promise<FleetBroadcastResult> {
+    timeoutMs: number = 5000,
+  ): Promise<FleetCommandResult> {
     const fleet = this.fleets.get(fleetId);
     if (!fleet) {
       throw new Error(`Fleet ${fleetId} not found`);
     }
 
     const members = Array.from(fleet.members.keys());
-    const result: FleetBroadcastResult = {
+    const result: FleetCommandResult = {
       fleetId,
       targetDevices: members.length,
       successful: 0,
       failed: 0,
       failures: [],
+      ackResults: [],
     };
 
     this.logger.log(
@@ -183,17 +189,33 @@ export class FleetService {
     for (const deviceId of members) {
       try {
         const command = commandBuilder(deviceId);
-        const success = this.commandPublisher.sendCommand(deviceId, command);
+        const ackResult = await this.commandPublisher.sendCommand(
+          deviceId,
+          command,
+          timeoutMs,
+        );
 
-        if (success) {
+        result.ackResults.push(ackResult);
+
+        if (ackResult.success) {
           result.successful++;
         } else {
           result.failed++;
-          result.failures.push({ deviceId, reason: 'Device not connected' });
+          result.failures.push({
+            deviceId,
+            reason: ackResult.errorMessage || 'Command failed',
+          });
         }
       } catch (error) {
         result.failed++;
         result.failures.push({ deviceId, reason: error.message });
+        result.ackResults.push({
+          success: false,
+          commandId: '',
+          deviceId,
+          errorMessage: error.message,
+          timedOut: false,
+        });
       }
     }
 
@@ -203,10 +225,11 @@ export class FleetService {
     return result;
   }
 
-  broadcastContent(
+  async broadcastContent(
     fleetId: string,
     contentPackage: ContentPackage,
-  ): FleetBroadcastResult {
+    timeoutMs: number = 5000,
+  ): Promise<FleetBroadcastResult> {
     const fleet = this.fleets.get(fleetId);
     if (!fleet) {
       throw new Error(`Fleet ${fleetId} not found`);
@@ -227,16 +250,20 @@ export class FleetService {
 
     for (const deviceId of members) {
       try {
-        const success = this.contentPublisher.publishToDevice(
+        const ackResult = await this.contentPublisher.publishToDevice(
           deviceId,
           contentPackage,
+          timeoutMs,
         );
 
-        if (success) {
+        if (ackResult.success) {
           result.successful++;
         } else {
           result.failed++;
-          result.failures.push({ deviceId, reason: 'Device not connected' });
+          result.failures.push({
+            deviceId,
+            reason: ackResult.errorMessage || 'Content delivery failed',
+          });
         }
       } catch (error) {
         result.failed++;
@@ -255,31 +282,39 @@ export class FleetService {
     fleetId: string,
     orientation: string,
     fullscreen?: boolean,
-  ): Promise<FleetBroadcastResult> {
-    return this.broadcastCommand(fleetId, (deviceId) =>
-      CommandMapper.toCommandPackage({
-        command_id: `rotate-fleet-${fleetId}-${Date.now()}`,
-        requires_ack: true,
-        issued_at: new Date().toISOString(),
-        rotate_screen: {
-          orientation,
-          fullscreen: fullscreen ?? null,
-        },
-      }),
+    timeoutMs: number = 5000,
+  ): Promise<FleetCommandResult> {
+    return this.broadcastCommand(
+      fleetId,
+      (deviceId) =>
+        CommandMapper.toCommandPackage({
+          command_id: `rotate-fleet-${fleetId}-${Date.now()}`,
+          requires_ack: true,
+          issued_at: new Date().toISOString(),
+          rotate_screen: {
+            orientation,
+            fullscreen: fullscreen ?? null,
+          },
+        }),
+      timeoutMs,
     );
   }
 
   async rebootFleet(
     fleetId: string,
     delaySeconds: number = 0,
-  ): Promise<FleetBroadcastResult> {
-    return this.broadcastCommand(fleetId, (deviceId) =>
-      CommandMapper.toCommandPackage({
-        command_id: `reboot-fleet-${fleetId}-${Date.now()}`,
-        requires_ack: true,
-        issued_at: new Date().toISOString(),
-        request_reboot: { delay_seconds: delaySeconds },
-      }),
+    timeoutMs: number = 5000,
+  ): Promise<FleetCommandResult> {
+    return this.broadcastCommand(
+      fleetId,
+      (deviceId) =>
+        CommandMapper.toCommandPackage({
+          command_id: `reboot-fleet-${fleetId}-${Date.now()}`,
+          requires_ack: true,
+          issued_at: new Date().toISOString(),
+          request_reboot: { delay_seconds: delaySeconds },
+        }),
+      timeoutMs,
     );
   }
 
@@ -287,28 +322,36 @@ export class FleetService {
     fleetId: string,
     newSsid: string,
     newPassword: string,
-  ): Promise<FleetBroadcastResult> {
-    return this.broadcastCommand(fleetId, (deviceId) =>
-      CommandMapper.toCommandPackage({
-        command_id: `network-fleet-${fleetId}-${Date.now()}`,
-        requires_ack: true,
-        issued_at: new Date().toISOString(),
-        update_network: { new_ssid: newSsid, new_password: newPassword },
-      }),
+    timeoutMs: number = 5000,
+  ): Promise<FleetCommandResult> {
+    return this.broadcastCommand(
+      fleetId,
+      (deviceId) =>
+        CommandMapper.toCommandPackage({
+          command_id: `network-fleet-${fleetId}-${Date.now()}`,
+          requires_ack: true,
+          issued_at: new Date().toISOString(),
+          update_network: { new_ssid: newSsid, new_password: newPassword },
+        }),
+      timeoutMs,
     );
   }
 
   async setClockFleet(
     fleetId: string,
     simulatedTime: string,
-  ): Promise<FleetBroadcastResult> {
-    return this.broadcastCommand(fleetId, (deviceId) =>
-      CommandMapper.toCommandPackage({
-        command_id: `clock-fleet-${fleetId}-${Date.now()}`,
-        requires_ack: true,
-        issued_at: new Date().toISOString(),
-        set_clock: { simulated_time: simulatedTime },
-      }),
+    timeoutMs: number = 5000,
+  ): Promise<FleetCommandResult> {
+    return this.broadcastCommand(
+      fleetId,
+      (deviceId) =>
+        CommandMapper.toCommandPackage({
+          command_id: `clock-fleet-${fleetId}-${Date.now()}`,
+          requires_ack: true,
+          issued_at: new Date().toISOString(),
+          set_clock: { simulated_time: simulatedTime },
+        }),
+      timeoutMs,
     );
   }
 
