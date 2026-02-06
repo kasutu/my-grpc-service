@@ -1,0 +1,281 @@
+// Copyright (c) Localize Technologies, Inc. All rights reserved.
+
+// Analytics service for hydrogen nodes
+// Used to track playback impressions, errors, and health metrics
+
+syntax = "proto3";
+
+package analytics.v1;
+
+// Analytics service - client reports events to server
+service AnalyticsService {
+  // Bidirectional streaming for real-time event reporting
+  // Server can provide backpressure and policy updates
+  rpc StreamEvents(stream AnalyticsBatch) returns (stream BatchAck);
+  
+  // Unary upload for one-off batches or when streaming is not needed
+  rpc UploadBatch(AnalyticsBatch) returns (BatchAck);
+  
+  // Health check - client reports network context, server provides upload policy
+  rpc PingWithContext(NetworkContext) returns (PingResponse);
+}
+
+// ============================================================================
+// Batching
+// ============================================================================
+
+// A batch of analytics events sent together for efficiency
+message AnalyticsBatch {
+  // Device identifier (UUID)
+  string device_id = 1;
+  
+  // Unique batch ID for idempotency (client-generated UUID)
+  string batch_id = 2;
+  
+  // When the batch was created (client timestamp, milliseconds since epoch)
+  int64 timestamp_ms = 3;
+  
+  // Events in this batch
+  repeated AnalyticsEvent events = 4;
+  
+  // Network conditions at time of upload
+  NetworkContext network_context = 5;
+  
+  // Client-side queue status for backpressure signaling
+  QueueStatus queue_status = 6;
+}
+
+// Status of the client's local event queue
+message QueueStatus {
+  // Number of events waiting to be sent
+  int32 pending_events = 1;
+  
+  // Age of oldest pending event (hours)
+  int32 oldest_event_age_hours = 2;
+  
+  // True if queue is growing faster than draining
+  bool is_backpressure = 3;
+}
+
+// ============================================================================
+// Network Context
+// ============================================================================
+
+// Network conditions at the time of event/upload
+message NetworkContext {
+  // Connection quality assessment by client
+  ConnectionQuality quality = 1;
+  
+  // Last measured download speed (Mbps)
+  double download_mbps = 2;
+  
+  // Last measured upload speed (Mbps)
+  double upload_mbps = 3;
+  
+  // Connection type: wifi, ethernet, cellular, unknown
+  string connection_type = 4;
+  
+  // Signal strength in dBm (for wifi/cellular)
+  int32 signal_strength_dbm = 5;
+}
+
+// Connection quality levels based on download speed
+enum ConnectionQuality {
+  CONNECTION_QUALITY_UNSPECIFIED = 0;
+  CONNECTION_QUALITY_EXCELLENT = 1;   // >10 Mbps
+  CONNECTION_QUALITY_GOOD = 2;        // >5 Mbps
+  CONNECTION_QUALITY_FAIR = 3;        // >1 Mbps
+  CONNECTION_QUALITY_POOR = 4;        // <1 Mbps
+  CONNECTION_QUALITY_OFFLINE = 5;
+}
+
+// ============================================================================
+// Events
+// ============================================================================
+
+// A single analytics event
+message AnalyticsEvent {
+  // Unique event ID (client-generated UUID)
+  string event_id = 1;
+  
+  // When the event occurred (client timestamp, milliseconds since epoch)
+  int64 timestamp_ms = 2;
+  
+  // Session ID for grouping related events
+  string session_id = 3;
+  
+  // Event category for server routing
+  EventCategory category = 4;
+  
+  // Campaign ID if event is campaign-related
+  string campaign_id = 5;
+  
+  // Media ID if event is media-related
+  string media_id = 6;
+  
+  // Event-specific payload (oneof for type safety)
+  oneof payload {
+    PlaybackEvent playback = 10;
+    ErrorEvent error = 11;
+    HealthEvent health = 12;
+    InteractionEvent interaction = 13;
+  }
+  
+  // Additional labels for filtering/custom data
+  map<string, string> labels = 20;
+  
+  // Network context at the time of event (may differ from upload time)
+  EventNetworkContext event_network = 21;
+}
+
+// Network context snapshot at event creation time
+message EventNetworkContext {
+  ConnectionQuality quality = 1;
+}
+
+// Event categories for server-side routing
+enum EventCategory {
+  EVENT_CATEGORY_UNSPECIFIED = 0;
+  EVENT_CATEGORY_PLAYBACK = 1;      // Media playback events
+  EVENT_CATEGORY_ERROR = 2;         // Errors and crashes
+  EVENT_CATEGORY_HEALTH = 3;        // Device health metrics
+  EVENT_CATEGORY_INTERACTION = 4;   // User/device interactions
+}
+
+// ============================================================================
+// Event Payloads
+// ============================================================================
+
+// Playback event - tracks media playback lifecycle
+message PlaybackEvent {
+  PlaybackAction action = 1;
+  
+  // Actual play duration (milliseconds)
+  int64 duration_ms = 2;
+  
+  // Total content duration (milliseconds)
+  int64 content_duration_ms = 3;
+  
+  // Completion rate 0.0 - 1.0 (duration_ms / content_duration_ms)
+  float completion_rate = 4;
+  
+  // Playback session ID (unique per playback attempt)
+  string playback_id = 5;
+  
+  enum PlaybackAction {
+    PLAYBACK_ACTION_UNSPECIFIED = 0;
+    PLAYBACK_ACTION_STARTED = 1;
+    PLAYBACK_ACTION_COMPLETED = 2;
+    PLAYBACK_ACTION_SKIPPED = 3;
+    PLAYBACK_ACTION_ERROR = 4;
+    PLAYBACK_ACTION_PAUSED = 5;
+    PLAYBACK_ACTION_RESUMED = 6;
+  }
+}
+
+// Error event - tracks errors and exceptions
+message ErrorEvent {
+  // Error code for categorization (e.g., "DOWNLOAD_FAILED", "VIDEO_DECODE_ERROR")
+  string error_code = 1;
+  
+  // Human-readable error message
+  string message = 2;
+  
+  // Stack trace if available
+  string stack_trace = 3;
+  
+  // Error severity
+  ErrorSeverity severity = 4;
+  
+  // Source component (e.g., "VideoPlayer", "DownloadService")
+  string source = 5;
+  
+  enum ErrorSeverity {
+    ERROR_SEVERITY_UNSPECIFIED = 0;
+    ERROR_SEVERITY_WARNING = 1;    // Non-fatal, can continue
+    ERROR_SEVERITY_ERROR = 2;      // Feature failed, app continues
+    ERROR_SEVERITY_CRITICAL = 3;   // App crash or fatal error
+  }
+}
+
+// Health event - periodic device health metrics
+message HealthEvent {
+  // CPU usage percentage (0.0 - 100.0)
+  float cpu_percent = 1;
+  
+  // Memory usage percentage (0.0 - 100.0)
+  float memory_percent = 2;
+  
+  // Disk usage percentage (0.0 - 100.0)
+  float disk_percent = 3;
+  
+  // Device temperature in celsius (if available)
+  float temperature_celsius = 4;
+  
+  // App uptime (milliseconds)
+  int64 uptime_ms = 5;
+  
+  // System uptime (milliseconds)
+  int64 system_uptime_ms = 6;
+}
+
+// Interaction event - user or remote interactions
+message InteractionEvent {
+  // Action type (e.g., "button_press", "remote_command", "screen_rotation")
+  string action = 1;
+  
+  // Target of the action (e.g., "power_button", "volume_up", "orientation")
+  string target = 2;
+  
+  // Action result/value (e.g., "success", "landscape", "portrait")
+  string value = 3;
+}
+
+// ============================================================================
+// Server Responses
+// ============================================================================
+
+// Server acknowledgment for a batch
+message BatchAck {
+  // Batch ID being acknowledged
+  string batch_id = 1;
+  
+  // True if batch was accepted
+  bool accepted = 2;
+  
+  // Recommended upload policy based on server conditions
+  UploadPolicy recommended_policy = 3;
+  
+  // Event IDs that failed validation (should be retried)
+  repeated string failed_event_ids = 4;
+  
+  // Error message if batch was rejected
+  string error_message = 5;
+}
+
+// Upload policy from server to guide client behavior
+message UploadPolicy {
+  // Minimum connection quality required for uploads
+  ConnectionQuality min_quality = 1;
+  
+  // Maximum events per batch
+  int32 max_batch_size = 2;
+  
+  // Force upload if events are older than this (hours)
+  int32 max_queue_age_hours = 3;
+  
+  // Interval between uploads (seconds)
+  int32 upload_interval_seconds = 4;
+}
+
+// Response to ping with context
+message PingResponse {
+  // True if server is ready to receive events
+  bool server_ready = 1;
+  
+  // Suggested upload policy
+  UploadPolicy suggested_policy = 2;
+  
+  // Server timestamp for clock sync (optional)
+  int64 server_timestamp_ms = 3;
+}

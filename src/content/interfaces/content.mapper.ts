@@ -61,13 +61,4 @@ export class ContentMapper {
       url: json.url ?? '',
     };
   }
-
-  static toAckRequest(json: any) {
-    return {
-      deviceId: json.device_id ?? '',
-      deliveryId: json.delivery_id?.toString() ?? '',
-      processedSuccessfully: json.processed_successfully ?? false,
-      errorMessage: json.error_message,
-    };
-  }
 }

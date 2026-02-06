@@ -70,6 +70,9 @@ export class ContentPublisherService implements OnModuleDestroy {
     }
   }
 
+  /**
+   * Handle acknowledgment from device
+   */
   acknowledge(
     deviceId: string,
     deliveryId: string,
