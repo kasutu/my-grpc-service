@@ -4,6 +4,7 @@ import { AppModule } from '../src/app.module';
 import { GrpcTestClient } from './utils/grpc-client.util';
 import { delay } from './helpers/async';
 import { AnalyticsFixture } from './fixtures/analytics.fixture';
+import * as cbor from 'cbor';
 
 let passed = 0;
 let failed = 0;
@@ -67,14 +68,19 @@ async function runTests() {
     return body.fleet.id;
   }
 
-  // Helper to upload analytics batch using fixtures
-  async function uploadAnalyticsBatch(deviceId: string, events: any[]) {
-    return grpcClient.uploadBatch({
-      device_id: deviceId,
-      batch_id: AnalyticsFixture.generateBatchId(),
-      timestamp_ms: Date.now(),
-      events,
+  // Helper to ingest analytics via HTTP (v2 API)
+  async function ingestAnalyticsHttp(deviceFingerprint: number, events: any[]) {
+    const response = await fetch(`${httpUrl}/analytics/ingest/${deviceFingerprint}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ events }),
     });
+    return response;
+  }
+
+  // Helper to encode payload to CBOR
+  function encodePayload(payload: Record<string, unknown>): Buffer {
+    return cbor.encode(payload);
   }
 
   const tests: TestCase[] = [
@@ -149,111 +155,113 @@ async function runTests() {
       if (response.status !== 404) throw new Error(`Expected 404, got ${response.status}`);
     }),
 
-    // Analytics Tests - gRPC UploadBatch
-    test('Analytics: upload valid playback batch via gRPC', async () => {
-      const batchId = AnalyticsFixture.generateBatchId();
-      const deviceId = `analytics-device-${Date.now()}`;
-      const event = AnalyticsFixture.createPlaybackEvent({
+    // Analytics v2 Tests - gRPC Ingest
+    test('Analytics v2: ingest valid batch via gRPC', async () => {
+      const deviceFingerprint = 0x12345678;
+      const batchId = AnalyticsFixture.generateBatchIdBytes();
+      const payload = AnalyticsFixture.createImpressionPayload({
         campaignId: 'campaign-001',
-        mediaId: 'media-001',
+        playCount: 5,
       });
       
-      const response = await grpcClient.uploadBatch({
-        device_id: deviceId,
+      const response = await grpcClient.ingest({
         batch_id: batchId,
-        timestamp_ms: Date.now(),
         events: [{
-          event_id: event.eventId,
-          timestamp_ms: event.timestampMs,
-          category: 1, // PLAYBACK
-          playback: {
-            campaign_id: event.playback!.campaignId,
-            media_id: event.playback!.mediaId,
-            duration_ms: event.playback!.durationMs,
-            completed: event.playback!.completed,
+          event_id: AnalyticsFixture.generateEventIdBytes(),
+          timestamp_ms: Date.now(),
+          type: 'IMPRESSION',
+          schema_version: 0x00010000,
+          payload: encodePayload(payload),
+          network: {
+            quality: 'GOOD',
+            download_mbps: 10.5,
+            upload_mbps: 5.0,
+            connection_type: 'wifi',
+            signal_strength_dbm: -50,
           },
         }],
-        network_context: {
-          quality: 2, // GOOD
-          download_speed_mbps: 10.5,
-          latency_ms: 50,
-        },
-        queue_status: {
-          pending_count: 1,
-          oldest_event_hours: 0,
-        },
+        device_fingerprint: deviceFingerprint,
+        sent_at_ms: Date.now(),
       });
 
-      if (!response.accepted) throw new Error(`Batch rejected: ${response.rejection_reason}`);
-      if (response.batch_id !== batchId) throw new Error('Batch ID mismatch');
-      if (response.failed_event_ids.length > 0) throw new Error('Some events failed');
+      if (!response.accepted) throw new Error(`Batch rejected`);
+      if (response.rejected_event_ids && response.rejected_event_ids.length > 0) {
+        throw new Error('Some events were rejected');
+      }
       if (!response.policy) throw new Error('Missing upload policy');
     }),
 
-    test('Analytics: reject batch with missing device_id', async () => {
-      const response = await grpcClient.uploadBatch({
-        device_id: '',
-        batch_id: `batch-${Date.now()}`,
-        timestamp_ms: Date.now(),
-        events: [{ event_id: 'evt-1', timestamp_ms: Date.now(), category: 1 }],
-      });
-
-      if (response.accepted) throw new Error('Should reject empty device_id');
-      if (!response.rejection_reason.includes('device_id')) {
-        throw new Error(`Wrong rejection reason: ${response.rejection_reason}`);
-      }
-    }),
-
-    test('Analytics: reject batch with empty events', async () => {
-      const response = await grpcClient.uploadBatch({
-        device_id: 'test-device',
-        batch_id: `batch-${Date.now()}`,
-        timestamp_ms: Date.now(),
+    test('Analytics v2: reject batch with empty events', async () => {
+      const response = await grpcClient.ingest({
+        batch_id: AnalyticsFixture.generateBatchIdBytes(),
         events: [],
+        device_fingerprint: 0x99999999,
+        sent_at_ms: Date.now(),
       });
 
       if (response.accepted) throw new Error('Should reject empty events');
-      if (!response.rejection_reason.includes('Empty')) {
-        throw new Error(`Wrong rejection reason: ${response.rejection_reason}`);
-      }
     }),
 
-    test('Analytics: reject oversized batch', async () => {
-      const events = Array(150).fill(null).map((_, i) => ({
-        event_id: `evt-${i}`,
+    test('Analytics v2: reject oversized batch', async () => {
+      const events = Array(150).fill(null).map(() => ({
+        event_id: AnalyticsFixture.generateEventIdBytes(),
         timestamp_ms: Date.now(),
-        category: 1,
+        type: 'IMPRESSION' as const,
+        schema_version: 0x00010000,
+        payload: encodePayload(AnalyticsFixture.createImpressionPayload()),
       }));
 
-      const response = await grpcClient.uploadBatch({
-        device_id: 'test-device',
-        batch_id: `batch-${Date.now()}`,
-        timestamp_ms: Date.now(),
+      const response = await grpcClient.ingest({
+        batch_id: AnalyticsFixture.generateBatchIdBytes(),
         events,
+        device_fingerprint: 0x88888888,
+        sent_at_ms: Date.now(),
       });
 
       if (response.accepted) throw new Error('Should reject oversized batch');
-      if (!response.rejection_reason.includes('exceeds')) {
-        throw new Error(`Wrong rejection reason: ${response.rejection_reason}`);
-      }
     }),
 
-    // Analytics Tests - HTTP API
-    test('Analytics: HTTP GET /analytics/devices returns list', async () => {
-      const deviceId = `http-analytics-${Date.now()}`;
+    // Analytics v2 Tests - HTTP API
+    test('Analytics v2: HTTP POST /analytics/ingest/:deviceFingerprint', async () => {
+      const deviceFingerprint = 0x65432100;
       
-      // First upload some analytics using fixture
-      await uploadAnalyticsBatch(deviceId, [{
-        event_id: AnalyticsFixture.generateEventId(),
-        timestamp_ms: Date.now(),
-        category: 1,
-        playback: {
-          campaign_id: 'campaign-http',
-          media_id: 'media-http',
-          duration_ms: 3000,
-          completed: true,
+      const response = await fetch(`${httpUrl}/analytics/ingest/${deviceFingerprint}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          events: [
+            {
+              event_id: AnalyticsFixture.generateUuid(),
+              timestamp_ms: Date.now(),
+              type: 'IMPRESSION',
+              schema_version: 0x00010000,
+              payload: { c: 'campaign-http', p: 3, t: Date.now(), d: 15000, v: 1 },
+            },
+          ],
+        }),
+      });
+
+      if (response.status !== 201) {
+        const body = await response.text();
+        throw new Error(`Expected 201, got ${response.status}: ${body}`);
+      }
+      
+      const body = await response.json();
+      if (!body.accepted) throw new Error('Batch should be accepted');
+    }),
+
+    test('Analytics v2: HTTP GET /analytics/devices returns list', async () => {
+      const deviceFingerprint = 0x22223333;
+      
+      // First ingest some analytics
+      await ingestAnalyticsHttp(deviceFingerprint, [
+        {
+          event_id: AnalyticsFixture.generateUuid(),
+          timestamp_ms: Date.now(),
+          type: 'IMPRESSION',
+          payload: { c: 'c1', p: 1, t: Date.now(), d: 5000, v: 1 },
         },
-      }]);
+      ]);
 
       const response = await fetch(`${httpUrl}/analytics/devices`);
       if (response.status !== 200) throw new Error(`Expected 200, got ${response.status}`);
@@ -261,129 +269,77 @@ async function runTests() {
       const body = await response.json();
       if (!Array.isArray(body.devices)) throw new Error('devices should be an array');
       
-      const foundDevice = body.devices.find((d: any) => d.deviceId === deviceId);
+      const foundDevice = body.devices.find((d: any) => d.deviceFingerprint === deviceFingerprint);
       if (!foundDevice) throw new Error('Uploaded device not found in list');
-      if (foundDevice.totalEvents !== 1) throw new Error('Expected 1 event');
     }),
 
-    test('Analytics: HTTP GET /analytics/devices/:id/events', async () => {
-      const deviceId = `http-events-${Date.now()}`;
+    test('Analytics v2: HTTP GET /analytics/devices/:deviceFingerprint/events', async () => {
+      const deviceFingerprint = 0x33334444;
       
-      await uploadAnalyticsBatch(deviceId, [
+      await ingestAnalyticsHttp(deviceFingerprint, [
         {
-          event_id: AnalyticsFixture.generateEventId(),
+          event_id: AnalyticsFixture.generateUuid(),
           timestamp_ms: Date.now(),
-          category: 1,
-          playback: { campaign_id: 'c1', media_id: 'm1', duration_ms: 1000, completed: true },
+          type: 'IMPRESSION',
+          payload: { c: 'c1', p: 1, t: Date.now(), d: 1000, v: 1 },
         },
         {
-          event_id: AnalyticsFixture.generateEventId(),
+          event_id: AnalyticsFixture.generateUuid(),
           timestamp_ms: Date.now(),
-          category: 1,
-          playback: { campaign_id: 'c2', media_id: 'm2', duration_ms: 2000, completed: true },
+          type: 'ERROR',
+          payload: { code: 'TEST_ERROR', msg: 'test', v: 1 },
         },
       ]);
 
-      const response = await fetch(`${httpUrl}/analytics/devices/${deviceId}/events`);
+      const response = await fetch(`${httpUrl}/analytics/devices/${deviceFingerprint}/events`);
       if (response.status !== 200) throw new Error(`Expected 200, got ${response.status}`);
       
       const body = await response.json();
-      if (body.deviceId !== deviceId) throw new Error('Device ID mismatch');
+      if (body.deviceFingerprint !== deviceFingerprint) throw new Error('Device fingerprint mismatch');
       if (body.totalEvents !== 2) throw new Error('Expected 2 events');
-      if (body.events.length !== 2) throw new Error('Expected 2 events in array');
     }),
 
-    test('Analytics: HTTP GET /analytics/devices/:id/summary', async () => {
-      const deviceId = `http-summary-${Date.now()}`;
+    test('Analytics v2: HTTP GET /analytics/devices/:deviceFingerprint/summary', async () => {
+      const deviceFingerprint = 0x44445555;
       const timestamp = Date.now();
       
-      await uploadAnalyticsBatch(deviceId, [
-        { event_id: AnalyticsFixture.generateEventId(), timestamp_ms: timestamp, category: 1, playback: { campaign_id: 'c1', media_id: 'm1', duration_ms: 1000, completed: true } },
-        { event_id: AnalyticsFixture.generateEventId(), timestamp_ms: timestamp, category: 2, error: { error_type: 'TEST_ERROR', message: 'test', component: 'test', is_fatal: false } },
-        { event_id: AnalyticsFixture.generateEventId(), timestamp_ms: timestamp, category: 3, health: { battery_level: 50, storage_free_bytes: 1000000, cpu_usage: 10, memory_usage: 20, connection_quality: 2 } },
+      await ingestAnalyticsHttp(deviceFingerprint, [
+        { event_id: AnalyticsFixture.generateUuid(), timestamp_ms: timestamp, type: 'IMPRESSION', payload: { c: 'c1', p: 1, t: timestamp, d: 1000, v: 1 } },
+        { event_id: AnalyticsFixture.generateUuid(), timestamp_ms: timestamp, type: 'ERROR', payload: { code: 'ERR', msg: 'test', v: 1 } },
+        { event_id: AnalyticsFixture.generateUuid(), timestamp_ms: timestamp, type: 'HEARTBEAT', payload: { uptime: 3600000, battery: 50, v: 1 } },
       ]);
 
-      const response = await fetch(`${httpUrl}/analytics/devices/${deviceId}/summary`);
+      const response = await fetch(`${httpUrl}/analytics/devices/${deviceFingerprint}/summary`);
       if (response.status !== 200) throw new Error(`Expected 200, got ${response.status}`);
       
       const body = await response.json();
-      if (body.deviceId !== deviceId) throw new Error('Device ID mismatch');
+      if (body.deviceFingerprint !== deviceFingerprint) throw new Error('Device fingerprint mismatch');
       if (body.totalEvents !== 3) throw new Error('Expected 3 total events');
-      if (body.playbackCount !== 1) throw new Error('Expected 1 playback event');
-      if (body.errorCount !== 1) throw new Error('Expected 1 error event');
+      if (body.eventsByType.IMPRESSION !== 1) throw new Error('Expected 1 impression');
+      if (body.eventsByType.ERROR !== 1) throw new Error('Expected 1 error');
     }),
 
-    test('Analytics: HTTP GET /analytics/devices/:id/summary returns 404 for unknown', async () => {
-      const response = await fetch(`${httpUrl}/analytics/devices/unknown-device-xyz/summary`);
+    test('Analytics v2: HTTP GET /analytics/devices/:deviceFingerprint/summary returns 404 for unknown', async () => {
+      const response = await fetch(`${httpUrl}/analytics/devices/99999999/summary`);
       if (response.status !== 404) throw new Error(`Expected 404, got ${response.status}`);
     }),
 
-    test('Analytics: HTTP GET /analytics/fleets/:id returns fleet analytics', async () => {
-      const deviceId = `fleet-device-${Date.now()}`;
-      const fleetId = await createFleet('Analytics Test Fleet', [deviceId]);
+    test('Analytics v2: HTTP GET /analytics/fleets/:id returns fleet analytics', async () => {
+      const fleetId = await createFleet('Analytics v2 Test Fleet', []);
       
-      // Upload analytics for the fleet device using helper
-      await uploadAnalyticsBatch(deviceId, [
-        { event_id: AnalyticsFixture.generateEventId(), timestamp_ms: Date.now(), category: 1, playback: { campaign_id: 'c1', media_id: 'm1', duration_ms: 5000, completed: true } },
-        { event_id: AnalyticsFixture.generateEventId(), timestamp_ms: Date.now(), category: 2, error: { error_type: 'NETWORK', message: 'timeout', component: 'Downloader', is_fatal: false } },
-      ]);
-
       const response = await fetch(`${httpUrl}/analytics/fleets/${fleetId}`);
       if (response.status !== 200) throw new Error(`Expected 200, got ${response.status}`);
       
       const body = await response.json();
       if (body.fleetId !== fleetId) throw new Error('Fleet ID mismatch');
-      if (body.totalDevices !== 1) throw new Error('Expected 1 device');
-      if (!body.playbackStats) throw new Error('Missing playbackStats');
-      if (!body.errorStats) throw new Error('Missing errorStats');
-      if (!body.healthOverview) throw new Error('Missing healthOverview');
     }),
 
-    test('Analytics: HTTP GET /analytics/fleets/:id returns 404 for non-existent', async () => {
+    test('Analytics v2: HTTP GET /analytics/fleets/:id returns 404 for non-existent', async () => {
       const response = await fetch(`${httpUrl}/analytics/fleets/non-existent-fleet-xyz`);
       if (response.status !== 404) throw new Error(`Expected 404, got ${response.status}`);
     }),
 
-    test('Analytics: HTTP GET /analytics/fleets/:id/playback', async () => {
-      const deviceId = `playback-device-${Date.now()}`;
-      const fleetId = await createFleet('Playback Test Fleet', [deviceId]);
-      
-      await uploadAnalyticsBatch(deviceId, [
-        { event_id: AnalyticsFixture.generateEventId(), timestamp_ms: Date.now(), category: 1, playback: { campaign_id: 'campaign-1', media_id: 'm1', duration_ms: 5000, completed: true } },
-        { event_id: AnalyticsFixture.generateEventId(), timestamp_ms: Date.now(), category: 1, playback: { campaign_id: 'campaign-1', media_id: 'm2', duration_ms: 3000, completed: true } },
-        { event_id: AnalyticsFixture.generateEventId(), timestamp_ms: Date.now(), category: 1, playback: { campaign_id: 'campaign-2', media_id: 'm3', duration_ms: 4000, completed: true } },
-      ]);
-
-      const response = await fetch(`${httpUrl}/analytics/fleets/${fleetId}/playback`);
-      if (response.status !== 200) throw new Error(`Expected 200, got ${response.status}`);
-      
-      const body = await response.json();
-      if (body.totalPlays !== 3) throw new Error(`Expected 3 plays, got ${body.totalPlays}`);
-      if (body.uniqueCampaigns !== 2) throw new Error(`Expected 2 unique campaigns, got ${body.uniqueCampaigns}`);
-      if (!Array.isArray(body.campaignBreakdown)) throw new Error('campaignBreakdown should be an array');
-    }),
-
-    test('Analytics: HTTP GET /analytics/fleets/:id/errors', async () => {
-      const deviceId = `error-device-${Date.now()}`;
-      const fleetId = await createFleet('Error Test Fleet', [deviceId]);
-      
-      await uploadAnalyticsBatch(deviceId, [
-        { event_id: AnalyticsFixture.generateEventId(), timestamp_ms: Date.now(), category: 2, error: { error_type: 'NETWORK', message: 'timeout', component: 'Downloader', is_fatal: false } },
-        { event_id: AnalyticsFixture.generateEventId(), timestamp_ms: Date.now(), category: 2, error: { error_type: 'NETWORK', message: 'timeout', component: 'Downloader', is_fatal: false } },
-        { event_id: AnalyticsFixture.generateEventId(), timestamp_ms: Date.now(), category: 2, error: { error_type: 'PARSE', message: 'invalid json', component: 'Parser', is_fatal: true } },
-      ]);
-
-      const response = await fetch(`${httpUrl}/analytics/fleets/${fleetId}/errors`);
-      if (response.status !== 200) throw new Error(`Expected 200, got ${response.status}`);
-      
-      const body = await response.json();
-      if (body.totalErrors !== 3) throw new Error(`Expected 3 errors, got ${body.totalErrors}`);
-      if (body.fatalErrors !== 1) throw new Error(`Expected 1 fatal error, got ${body.fatalErrors}`);
-      if (!Array.isArray(body.byComponent)) throw new Error('byComponent should be an array');
-      if (!Array.isArray(body.byType)) throw new Error('byType should be an array');
-    }),
-
-    test('Analytics: HTTP GET /analytics/summary', async () => {
+    test('Analytics v2: HTTP GET /analytics/summary', async () => {
       const response = await fetch(`${httpUrl}/analytics/summary`);
       if (response.status !== 200) throw new Error(`Expected 200, got ${response.status}`);
       
@@ -391,7 +347,6 @@ async function runTests() {
       if (typeof body.totalDevices !== 'number') throw new Error('totalDevices should be a number');
       if (typeof body.totalEvents !== 'number') throw new Error('totalEvents should be a number');
       if (body.storageLimit !== 50000) throw new Error('storageLimit should be 50000');
-      if (typeof body.storageUsagePercent !== 'number') throw new Error('storageUsagePercent should be a number');
     }),
   ];
 

@@ -2,45 +2,32 @@ import * as grpc from '@grpc/grpc-js';
 import * as protoLoader from '@grpc/proto-loader';
 import { join } from 'path';
 
+// New v2 analytics client interface
 export interface GrpcAnalyticsClient {
-  uploadBatch(
+  ingest(
     request: {
-      device_id: string;
-      batch_id: string;
-      timestamp_ms: number;
+      batch_id: Buffer;
       events: Array<{
-        event_id: string;
+        event_id: Buffer;
         timestamp_ms: number;
-        category: number;
-        playback?: {
-          campaign_id: string;
-          media_id: string;
-          duration_ms: number;
-          completed: boolean;
-        };
-        error?: {
-          error_type: string;
-          message: string;
-          component: string;
-          is_fatal: boolean;
-        };
-        health?: {
-          battery_level: number;
-          storage_free_bytes: number;
-          cpu_usage: number;
-          memory_usage: number;
-          connection_quality: number;
+        type: string; // 'ERROR' | 'IMPRESSION' | 'HEARTBEAT' | 'PERFORMANCE' | 'LIFECYCLE'
+        schema_version: number;
+        payload: Buffer; // CBOR encoded
+        network?: {
+          quality: string; // 'OFFLINE' | 'POOR' | 'FAIR' | 'GOOD' | 'EXCELLENT'
+          download_mbps?: number;
+          upload_mbps?: number;
+          connection_type?: string;
+          signal_strength_dbm?: number;
         };
       }>;
-      network_context?: {
-        quality: number;
-        download_speed_mbps: number;
-        latency_ms: number;
+      device_fingerprint: number;
+      queue?: {
+        pending_events?: number;
+        oldest_event_age_hours?: number;
+        is_backpressure?: boolean;
       };
-      queue_status?: {
-        pending_count: number;
-        oldest_event_hours: number;
-      };
+      sent_at_ms: number;
     },
     callback: (err: grpc.ServiceError | null, response: any) => void,
   ): void;
@@ -277,13 +264,14 @@ export class GrpcTestClient {
     });
   }
 
-  async uploadBatch(batchRequest: Parameters<GrpcAnalyticsClient['uploadBatch']>[0]): Promise<any> {
+  // New v2 analytics ingest method
+  async ingest(batchRequest: Parameters<GrpcAnalyticsClient['ingest']>[0]): Promise<any> {
     if (!this.analyticsClient) {
       throw new Error('Analytics client not connected');
     }
 
     return new Promise((resolve, reject) => {
-      this.analyticsClient!.uploadBatch(batchRequest as any, (err, response) => {
+      this.analyticsClient!.ingest(batchRequest as any, (err, response) => {
         if (err) {
           reject(err);
         } else {
@@ -292,6 +280,8 @@ export class GrpcTestClient {
       });
     });
   }
+
+  // Legacy method removed - analytics v2 uses 'ingest' instead of 'uploadBatch'
 }
 
 // Re-export helpers for backward compatibility

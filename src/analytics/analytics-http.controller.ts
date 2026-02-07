@@ -7,6 +7,7 @@ import {
   Query,
   HttpException,
   HttpStatus,
+  HttpCode,
 } from '@nestjs/common';
 import * as cbor from 'cbor';
 import { AnalyticsStoreService } from './services/analytics-store.service';
@@ -45,6 +46,7 @@ export class AnalyticsHttpController {
    * Accepts JSON events that will be encoded to CBOR
    */
   @Post('ingest/:deviceFingerprint')
+  @HttpCode(201)
   async ingestEvents(
     @Param('deviceFingerprint') deviceFingerprintStr: string,
     @Body()
