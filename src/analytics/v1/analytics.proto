@@ -1,0 +1,103 @@
+syntax = "proto3";
+
+package analytics.v1;
+
+// AnalyticsService handles batch uploads of analytics events from devices
+service AnalyticsService {
+  rpc UploadBatch(AnalyticsBatch) returns (BatchAck);
+}
+
+// AnalyticsBatch represents a batch of events sent by a device
+message AnalyticsBatch {
+  string device_id = 1;
+  string batch_id = 2;
+  int64 timestamp_ms = 3;
+  repeated AnalyticsEvent events = 4;
+  NetworkContext network_context = 5;
+  QueueStatus queue_status = 6;
+}
+
+// AnalyticsEvent represents a single analytics event
+message AnalyticsEvent {
+  string event_id = 1;
+  int64 timestamp_ms = 2;
+  EventCategory category = 3;
+  oneof payload {
+    PlaybackEvent playback = 10;
+    ErrorEvent error = 11;
+    HealthEvent health = 12;
+  }
+}
+
+// EventCategory categorizes the type of analytics event
+enum EventCategory {
+  EVENT_CATEGORY_UNSPECIFIED = 0;
+  EVENT_CATEGORY_PLAYBACK = 1;
+  EVENT_CATEGORY_ERROR = 2;
+  EVENT_CATEGORY_HEALTH = 3;
+}
+
+// PlaybackEvent tracks video/image campaign playback
+message PlaybackEvent {
+  string campaign_id = 1;
+  string media_id = 2;
+  int64 duration_ms = 3;
+  bool completed = 4;
+}
+
+// ErrorEvent tracks application errors
+message ErrorEvent {
+  string error_type = 1;
+  string message = 2;
+  string stack_trace = 3;
+  string component = 4;
+  bool is_fatal = 5;
+}
+
+// HealthEvent tracks device health metrics
+message HealthEvent {
+  float battery_level = 1;
+  int64 storage_free_bytes = 2;
+  float cpu_usage = 3;
+  float memory_usage = 4;
+  ConnectionQuality connection_quality = 5;
+}
+
+// NetworkContext provides network conditions at upload time
+message NetworkContext {
+  ConnectionQuality quality = 1;
+  float download_speed_mbps = 2;
+  int64 latency_ms = 3;
+}
+
+// ConnectionQuality represents network quality levels
+enum ConnectionQuality {
+  CONNECTION_QUALITY_UNSPECIFIED = 0;
+  CONNECTION_QUALITY_EXCELLENT = 1;  // >10 Mbps
+  CONNECTION_QUALITY_GOOD = 2;       // >5 Mbps
+  CONNECTION_QUALITY_FAIR = 3;       // >1 Mbps
+  CONNECTION_QUALITY_POOR = 4;       // <1 Mbps
+  CONNECTION_QUALITY_OFFLINE = 5;
+}
+
+// QueueStatus describes the device's local analytics queue state
+message QueueStatus {
+  int32 pending_count = 1;
+  int32 oldest_event_hours = 2;
+}
+
+// BatchAck is the server's response to a batch upload
+message BatchAck {
+  bool accepted = 1;
+  string batch_id = 2;
+  repeated string failed_event_ids = 3;
+  string rejection_reason = 4;
+  UploadPolicy policy = 5;
+}
+
+// UploadPolicy provides server-side sync configuration to the client
+message UploadPolicy {
+  int32 max_batch_size = 1;
+  int32 sync_interval_seconds = 2;
+  repeated int32 retry_delays_seconds = 3;
+}

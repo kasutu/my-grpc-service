@@ -1,4 +1,4 @@
-import {
+import type {
   ContentPackage,
   Content,
   TimeSlot,
@@ -59,15 +59,6 @@ export class ContentMapper {
       id: json.id ?? '',
       checksum: json.checksum ?? '',
       url: json.url ?? '',
-    };
-  }
-
-  static toAckRequest(json: any) {
-    return {
-      deviceId: json.device_id ?? '',
-      deliveryId: json.delivery_id?.toString() ?? '',
-      processedSuccessfully: json.processed_successfully ?? false,
-      errorMessage: json.error_message,
     };
   }
 }

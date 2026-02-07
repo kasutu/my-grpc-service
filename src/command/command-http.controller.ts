@@ -1,5 +1,16 @@
-import { Controller, Post, Param, Body, Get } from '@nestjs/common';
-import { CommandPublisherService } from './command-publisher.service';
+import {
+  Controller,
+  Post,
+  Param,
+  Body,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Res,
+  Query,
+} from '@nestjs/common';
+import type { Response } from 'express';
+import { CommandPublisherService, AckResult } from './command-publisher.service';
 import { CommandMapper } from 'src/command/interfaces/command.mapper';
 
 @Controller('commands')
@@ -23,7 +34,13 @@ export class CommandHttpController {
   }
 
   @Post('clock/:deviceId')
-  setClock(@Param('deviceId') deviceId: string, @Body() body: any) {
+  @HttpCode(HttpStatus.OK)
+  async setClock(
+    @Param('deviceId') deviceId: string,
+    @Body() body: any,
+    @Query('timeout') timeoutMs: string = '5000',
+    @Res({ passthrough: true }) res: Response,
+  ) {
     const command = CommandMapper.toCommandPackage({
       command_id: `clock-${Date.now()}`,
       requires_ack: true,
@@ -33,18 +50,20 @@ export class CommandHttpController {
       },
     });
 
-    const success = this.publisher.sendCommand(deviceId, command);
-    return {
-      success,
-      message: success
-        ? `Clock command sent to ${deviceId}`
-        : `Device ${deviceId} not connected`,
-      commandId: command.commandId,
-    };
+    const timeout = parseInt(timeoutMs, 10) || 5000;
+    const result = await this.publisher.sendCommand(deviceId, command, timeout);
+
+    return this.formatResponse(result, res);
   }
 
   @Post('reboot/:deviceId')
-  rebootDevice(@Param('deviceId') deviceId: string, @Body() body: any) {
+  @HttpCode(HttpStatus.OK)
+  async rebootDevice(
+    @Param('deviceId') deviceId: string,
+    @Body() body: any,
+    @Query('timeout') timeoutMs: string = '5000',
+    @Res({ passthrough: true }) res: Response,
+  ) {
     const command = CommandMapper.toCommandPackage({
       command_id: `reboot-${Date.now()}`,
       requires_ack: true,
@@ -54,18 +73,20 @@ export class CommandHttpController {
       },
     });
 
-    const success = this.publisher.sendCommand(deviceId, command);
-    return {
-      success,
-      message: success
-        ? `Reboot command sent to ${deviceId}`
-        : `Device ${deviceId} not connected`,
-      commandId: command.commandId,
-    };
+    const timeout = parseInt(timeoutMs, 10) || 5000;
+    const result = await this.publisher.sendCommand(deviceId, command, timeout);
+
+    return this.formatResponse(result, res);
   }
 
   @Post('network/:deviceId')
-  updateNetwork(@Param('deviceId') deviceId: string, @Body() body: any) {
+  @HttpCode(HttpStatus.OK)
+  async updateNetwork(
+    @Param('deviceId') deviceId: string,
+    @Body() body: any,
+    @Query('timeout') timeoutMs: string = '5000',
+    @Res({ passthrough: true }) res: Response,
+  ) {
     const command = CommandMapper.toCommandPackage({
       command_id: `network-${Date.now()}`,
       requires_ack: true,
@@ -76,40 +97,20 @@ export class CommandHttpController {
       },
     });
 
-    const success = this.publisher.sendCommand(deviceId, command);
-    return {
-      success,
-      message: success
-        ? `Network config sent to ${deviceId}`
-        : `Device ${deviceId} not connected`,
-      commandId: command.commandId,
-    };
-  }
+    const timeout = parseInt(timeoutMs, 10) || 5000;
+    const result = await this.publisher.sendCommand(deviceId, command, timeout);
 
-  @Post('broadcast/clock')
-  broadcastClock(@Body() body: any) {
-    const command = CommandMapper.toCommandPackage({
-      command_id: `clock-broadcast-${Date.now()}`,
-      requires_ack: false,
-      issued_at: new Date().toISOString(),
-      set_clock: {
-        simulated_time: body.simulated_time ?? '',
-      },
-    });
-
-    this.publisher.broadcastCommand(command);
-    return { success: true, message: 'Clock broadcast sent' };
-  }
-
-  @Get('stats')
-  getStats() {
-    return {
-      connected_devices: this.publisher.getConnectedCount(),
-    };
+    return this.formatResponse(result, res);
   }
 
   @Post('rotate/:deviceId')
-  rotateScreen(@Param('deviceId') deviceId: string, @Body() body: any) {
+  @HttpCode(HttpStatus.OK)
+  async rotateScreen(
+    @Param('deviceId') deviceId: string,
+    @Body() body: any,
+    @Query('timeout') timeoutMs: string = '5000',
+    @Res({ passthrough: true }) res: Response,
+  ) {
     const command = CommandMapper.toCommandPackage({
       command_id: `rotate-${Date.now()}`,
       requires_ack: true,
@@ -120,22 +121,42 @@ export class CommandHttpController {
       },
     });
 
-    const success = this.publisher.sendCommand(deviceId, command);
-    return {
-      success,
-      message: success
-        ? `Rotate command sent to ${deviceId}`
-        : `Device ${deviceId} not connected`,
-      commandId: command.commandId,
-      orientation: body.orientation,
-    };
+    const timeout = parseInt(timeoutMs, 10) || 5000;
+    const result = await this.publisher.sendCommand(deviceId, command, timeout);
+
+    return this.formatResponse(result, res);
+  }
+
+  @Post('broadcast/clock')
+  @HttpCode(HttpStatus.OK)
+  async broadcastClock(
+    @Body() body: any,
+    @Query('timeout') timeoutMs: string = '5000',
+  ) {
+    const command = CommandMapper.toCommandPackage({
+      command_id: `clock-broadcast-${Date.now()}`,
+      requires_ack: true,
+      issued_at: new Date().toISOString(),
+      set_clock: {
+        simulated_time: body.simulated_time ?? '',
+      },
+    });
+
+    const timeout = parseInt(timeoutMs, 10) || 5000;
+    const results = await this.publisher.broadcastCommand(command, timeout);
+
+    return this.formatBroadcastResponse(results);
   }
 
   @Post('broadcast/rotate')
-  broadcastRotate(@Body() body: any) {
+  @HttpCode(HttpStatus.OK)
+  async broadcastRotate(
+    @Body() body: any,
+    @Query('timeout') timeoutMs: string = '5000',
+  ) {
     const command = CommandMapper.toCommandPackage({
       command_id: `rotate-broadcast-${Date.now()}`,
-      requires_ack: false,
+      requires_ack: true,
       issued_at: new Date().toISOString(),
       rotate_screen: {
         orientation: body.orientation ?? 'auto',
@@ -143,11 +164,59 @@ export class CommandHttpController {
       },
     });
 
-    this.publisher.broadcastCommand(command);
+    const timeout = parseInt(timeoutMs, 10) || 5000;
+    const results = await this.publisher.broadcastCommand(command, timeout);
+
+    return this.formatBroadcastResponse(results);
+  }
+
+  @Get('stats')
+  getStats() {
     return {
-      success: true,
-      message: 'Rotate broadcast sent',
-      orientation: body.orientation,
+      connected_devices: this.publisher.getConnectedCount(),
+    };
+  }
+
+  private formatResponse(result: AckResult, res: Response) {
+    if (!result.success) {
+      if (result.errorMessage?.includes('not connected')) {
+        res.status(HttpStatus.SERVICE_UNAVAILABLE);
+      } else if (result.timedOut) {
+        res.status(HttpStatus.REQUEST_TIMEOUT);
+      } else {
+        res.status(HttpStatus.BAD_GATEWAY);
+      }
+    }
+
+    return {
+      success: result.success,
+      command_id: result.commandId,
+      device_id: result.deviceId,
+      message: result.success
+        ? 'Command executed successfully'
+        : result.errorMessage,
+      timed_out: result.timedOut ?? false,
+    };
+  }
+
+  private formatBroadcastResponse(results: AckResult[]) {
+    const successful = results.filter((r) => r.success);
+    const failed = results.filter((r) => !r.success);
+    const timedOut = failed.filter((r) => r.timedOut);
+
+    return {
+      success: failed.length === 0,
+      total_devices: results.length,
+      successful: successful.length,
+      failed: failed.length,
+      timed_out: timedOut.length,
+      results: results.map((r) => ({
+        device_id: r.deviceId,
+        success: r.success,
+        command_id: r.commandId,
+        error: r.errorMessage,
+        timed_out: r.timedOut ?? false,
+      })),
     };
   }
 }
