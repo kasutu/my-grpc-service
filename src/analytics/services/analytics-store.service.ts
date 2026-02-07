@@ -1,17 +1,12 @@
 import { Injectable, Logger } from '@nestjs/common';
-import type {
-  StoredAnalyticsEvent,
-  PlaybackRecord,
-  ErrorRecord,
-  HealthRecord,
-  DeviceAnalytics,
-} from '../interfaces/analytics.types';
+import type { StoredAnalyticsEvent, DeviceAnalytics, EventTypeString } from '../interfaces/analytics.types';
+import { EventType } from '../../generated/analytics/v1/analytics';
 
 @Injectable()
 export class AnalyticsStoreService {
   private readonly logger = new Logger(AnalyticsStoreService.name);
   private readonly events = new Map<string, StoredAnalyticsEvent>();
-  private readonly deviceEvents = new Map<string, Set<string>>(); // deviceId -> eventIds
+  private readonly deviceEvents = new Map<number, Set<string>>(); // deviceFingerprint -> eventIds
 
   // Configuration
   private readonly MAX_EVENTS = 50000;
@@ -21,13 +16,16 @@ export class AnalyticsStoreService {
    * Store multiple events from a batch
    */
   storeEvents(
-    deviceId: string,
     batchId: string,
     events: Array<{
       eventId: string;
+      deviceFingerprint: number;
+      batchId: string;
       timestampMs: number;
-      category: 'PLAYBACK' | 'ERROR' | 'HEALTH';
-      payload: PlaybackRecord | ErrorRecord | HealthRecord;
+      type: number;
+      schemaVersion: number;
+      payload: unknown;
+      network?: { quality: number; downloadMbps?: number; uploadMbps?: number; connectionType?: string; signalStrengthDbm?: number };
     }>,
   ): string[] {
     const now = Date.now();
@@ -41,26 +39,28 @@ export class AnalyticsStoreService {
     for (const event of events) {
       const storedEvent: StoredAnalyticsEvent = {
         eventId: event.eventId,
-        deviceId,
-        batchId,
+        deviceFingerprint: event.deviceFingerprint,
+        batchId: event.batchId,
         timestampMs: event.timestampMs,
-        category: event.category,
+        type: event.type,
+        schemaVersion: event.schemaVersion,
         payload: event.payload,
-        uploadedAt: now,
+        network: event.network,
+        receivedAt: now,
       };
 
       this.events.set(event.eventId, storedEvent);
       storedIds.push(event.eventId);
 
-      // Index by device
-      if (!this.deviceEvents.has(deviceId)) {
-        this.deviceEvents.set(deviceId, new Set());
+      // Index by device fingerprint
+      if (!this.deviceEvents.has(event.deviceFingerprint)) {
+        this.deviceEvents.set(event.deviceFingerprint, new Set());
       }
-      this.deviceEvents.get(deviceId)!.add(event.eventId);
+      this.deviceEvents.get(event.deviceFingerprint)!.add(event.eventId);
     }
 
     this.logger.log(
-      `Stored ${events.length} events for device ${deviceId} (batch: ${batchId})`,
+      `Stored ${events.length} events from batch ${batchId}`,
     );
     return storedIds;
   }
@@ -68,8 +68,8 @@ export class AnalyticsStoreService {
   /**
    * Get events for a specific device
    */
-  getEventsForDevice(deviceId: string): StoredAnalyticsEvent[] {
-    const eventIds = this.deviceEvents.get(deviceId);
+  getEventsForDevice(deviceFingerprint: number): StoredAnalyticsEvent[] {
+    const eventIds = this.deviceEvents.get(deviceFingerprint);
     if (!eventIds) return [];
 
     const events: StoredAnalyticsEvent[] = [];
@@ -84,61 +84,72 @@ export class AnalyticsStoreService {
   }
 
   /**
-   * Get all events (optionally filtered by time range)
+   * Get all events with optional filters
    */
-  getAllEvents(
-    options?: {
-      startTimeMs?: number;
-      endTimeMs?: number;
-      category?: 'PLAYBACK' | 'ERROR' | 'HEALTH';
-    },
-  ): StoredAnalyticsEvent[] {
-    const events = Array.from(this.events.values());
+  getAllEvents(options?: {
+    deviceFingerprint?: number;
+    type?: number;
+    startTimeMs?: number;
+    endTimeMs?: number;
+  }): StoredAnalyticsEvent[] {
+    let events = Array.from(this.events.values());
 
-    return events.filter((event) => {
-      if (options?.startTimeMs && event.timestampMs < options.startTimeMs) {
-        return false;
-      }
-      if (options?.endTimeMs && event.timestampMs > options.endTimeMs) {
-        return false;
-      }
-      if (options?.category && event.category !== options.category) {
-        return false;
-      }
-      return true;
-    });
+    if (options?.deviceFingerprint !== undefined) {
+      events = events.filter((e) => e.deviceFingerprint === options.deviceFingerprint);
+    }
+
+    if (options?.type !== undefined) {
+      events = events.filter((e) => e.type === options.type);
+    }
+
+    if (options?.startTimeMs !== undefined) {
+      events = events.filter((e) => e.timestampMs >= options.startTimeMs!);
+    }
+
+    if (options?.endTimeMs !== undefined) {
+      events = events.filter((e) => e.timestampMs <= options.endTimeMs!);
+    }
+
+    return events.sort((a, b) => b.timestampMs - a.timestampMs);
   }
 
   /**
    * Get aggregated analytics for a device
    */
-  getDeviceAnalytics(deviceId: string): DeviceAnalytics | null {
-    const events = this.getEventsForDevice(deviceId);
+  getDeviceAnalytics(deviceFingerprint: number): DeviceAnalytics | null {
+    const events = this.getEventsForDevice(deviceFingerprint);
     if (events.length === 0) return null;
 
-    const playbackCount = events.filter((e) => e.category === 'PLAYBACK').length;
-    const errorCount = events.filter((e) => e.category === 'ERROR').length;
-    const healthEvents = events.filter((e) => e.category === 'HEALTH');
+    const eventsByType: Record<EventTypeString, number> = {
+      ERROR: 0,
+      IMPRESSION: 0,
+      HEARTBEAT: 0,
+      PERFORMANCE: 0,
+      LIFECYCLE: 0,
+      UNKNOWN: 0,
+    };
 
-    const lastHealthSnapshot =
-      healthEvents.length > 0
-        ? (healthEvents[0].payload as HealthRecord)
-        : undefined;
+    for (const event of events) {
+      const typeStr = this.getEventTypeString(event.type);
+      eventsByType[typeStr]++;
+    }
+
+    const lastEvent = events[0]; // Already sorted by timestamp desc
+    const lastNetworkQuality = lastEvent.network?.quality;
 
     return {
-      deviceId,
-      lastSeenAt: Math.max(...events.map((e) => e.timestampMs)),
+      deviceFingerprint,
+      lastSeenAt: lastEvent.timestampMs,
       totalEvents: events.length,
-      playbackCount,
-      errorCount,
-      lastHealthSnapshot,
+      eventsByType,
+      lastNetworkQuality,
     };
   }
 
   /**
-   * Get device IDs that have events
+   * Get all device fingerprints that have events
    */
-  getDeviceIds(): string[] {
+  getDeviceFingerprints(): number[] {
     return Array.from(this.deviceEvents.keys());
   }
 
@@ -147,6 +158,13 @@ export class AnalyticsStoreService {
    */
   getEventCount(): number {
     return this.events.size;
+  }
+
+  /**
+   * Get event by ID
+   */
+  getEvent(eventId: string): StoredAnalyticsEvent | undefined {
+    return this.events.get(eventId);
   }
 
   /**
@@ -159,23 +177,23 @@ export class AnalyticsStoreService {
   }
 
   /**
-   * Get queue status for a device
+   * Get event type string from enum
    */
-  getQueueStatus(deviceId: string): { pendingCount: number; oldestEventHours: number } {
-    const events = this.getEventsForDevice(deviceId);
-    if (events.length === 0) {
-      return { pendingCount: 0, oldestEventHours: 0 };
+  private getEventTypeString(type: EventType): EventTypeString {
+    switch (type) {
+      case EventType.ERROR:
+        return 'ERROR';
+      case EventType.IMPRESSION:
+        return 'IMPRESSION';
+      case EventType.HEARTBEAT:
+        return 'HEARTBEAT';
+      case EventType.PERFORMANCE:
+        return 'PERFORMANCE';
+      case EventType.LIFECYCLE:
+        return 'LIFECYCLE';
+      default:
+        return 'UNKNOWN';
     }
-
-    const oldestEvent = events.reduce((oldest, event) =>
-      event.timestampMs < oldest.timestampMs ? event : oldest,
-    );
-
-    const oldestEventHours = Math.floor(
-      (Date.now() - oldestEvent.timestampMs) / (1000 * 60 * 60),
-    );
-
-    return { pendingCount: events.length, oldestEventHours };
   }
 
   /**
@@ -188,15 +206,15 @@ export class AnalyticsStoreService {
     for (const [eventId, event] of this.events) {
       if (event.timestampMs < cutoffTime) {
         this.events.delete(eventId);
-        this.deviceEvents.get(event.deviceId)?.delete(eventId);
+        this.deviceEvents.get(event.deviceFingerprint)?.delete(eventId);
         cleanedCount++;
       }
     }
 
     // Clean up empty device entries
-    for (const [deviceId, eventIds] of this.deviceEvents) {
+    for (const [deviceFingerprint, eventIds] of this.deviceEvents) {
       if (eventIds.size === 0) {
-        this.deviceEvents.delete(deviceId);
+        this.deviceEvents.delete(deviceFingerprint);
       }
     }
 

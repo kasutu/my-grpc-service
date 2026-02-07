@@ -1,138 +1,187 @@
 import { Injectable, Logger } from '@nestjs/common';
+import * as cbor from 'cbor';
 import { AnalyticsStoreService } from './services/analytics-store.service';
-import type {
-  AnalyticsBatch,
-  BatchAck,
-  UploadPolicy,
-  AnalyticsEvent,
-} from '../generated/analytics/v1/analytics';
-import type {
-  PlaybackRecord,
-  ErrorRecord,
-  HealthRecord,
-} from './interfaces/analytics.types';
+import type { Batch, Ack, Event, Policy } from '../generated/analytics/v1/analytics';
+import { ConnectionQuality } from '../generated/analytics/v1/analytics';
 
 @Injectable()
 export class AnalyticsService {
   private readonly logger = new Logger(AnalyticsService.name);
 
-  // Default server-side upload policy
-  private readonly defaultPolicy: UploadPolicy = {
+  // Default server-side policy
+  private readonly defaultPolicy: Policy = {
+    minQuality: ConnectionQuality.FAIR as number,
     maxBatchSize: 100,
-    syncIntervalSeconds: 300, // 5 minutes
-    retryDelaysSeconds: [1, 2, 4, 8, 15],
+    maxQueueAgeHours: 24,
+    uploadIntervalSeconds: 300, // 5 minutes
   };
 
   constructor(private readonly store: AnalyticsStoreService) {}
 
   /**
-   * Process an analytics batch upload from a device
+   * Process an analytics batch (primary ingestion method)
    */
-  uploadBatch(batch: AnalyticsBatch): BatchAck {
+  ingest(batch: Batch): Ack {
     return this.processBatch(batch);
   }
 
   /**
-   * Process an analytics batch upload from a device (internal)
+   * Process a batch of events from a device
    */
-  private processBatch(batch: AnalyticsBatch): BatchAck {
-    // Validate batch exists
+  private processBatch(batch: Batch): Ack {
+    // Validate batch
     if (!batch) {
-      return {
-        accepted: false,
-        batchId: '',
-        failedEventIds: [],
-        rejectionReason: 'Missing batch',
-        policy: this.defaultPolicy,
-      };
+      return this.createAck(Buffer.alloc(0), false, [], 'Missing batch');
     }
 
-    // Validate deviceId
-    if (!batch.deviceId) {
-      return {
-        accepted: false,
-        batchId: batch.batchId || '',
-        failedEventIds: [],
-        rejectionReason: 'Missing device_id',
-        policy: this.defaultPolicy,
-      };
+    // Validate batchId (should be 16 bytes)
+    if (!batch.batchId || batch.batchId.length === 0) {
+      return this.createAck(Buffer.alloc(0), false, [], 'Missing batch_id');
     }
 
-    // Validate batchId
-    if (!batch.batchId) {
-      return {
-        accepted: false,
-        batchId: '',
-        failedEventIds: [],
-        rejectionReason: 'Missing batch_id',
-        policy: this.defaultPolicy,
-      };
-    }
-
-    // Validate events array exists and is not empty
+    // Validate events
     if (!batch.events || !Array.isArray(batch.events) || batch.events.length === 0) {
-      return {
-        accepted: false,
-        batchId: batch.batchId,
-        failedEventIds: [],
-        rejectionReason: 'Empty batch (no events)',
-        policy: this.defaultPolicy,
-      };
+      return this.createAck(batch.batchId, false, [], 'Empty batch (no events)');
     }
 
     // Validate batch size
     if (batch.events.length > this.defaultPolicy.maxBatchSize) {
-      return {
-        accepted: false,
-        batchId: batch.batchId,
-        failedEventIds: [],
-        rejectionReason: `Batch size exceeds maximum (${batch.events.length} > ${this.defaultPolicy.maxBatchSize})`,
-        policy: this.defaultPolicy,
-      };
+      return this.createAck(
+        batch.batchId,
+        false,
+        [],
+        `Batch size exceeds maximum (${batch.events.length} > ${this.defaultPolicy.maxBatchSize})`,
+      );
     }
 
+    const batchIdHex = this.bytesToHex(batch.batchId);
     this.logger.log(
-      `Received analytics batch ${batch.batchId} from device ${batch.deviceId} with ${batch.events.length} events`,
+      `Received analytics batch ${batchIdHex} from device ${batch.deviceFingerprint} with ${batch.events.length} events`,
     );
 
-    // Convert and store events
-    const failedEventIds: string[] = [];
+    // Process each event
+    const rejectedEventIds: Uint8Array[] = [];
     const eventsToStore: Array<{
       eventId: string;
+      deviceFingerprint: number;
+      batchId: string;
       timestampMs: number;
-      category: 'PLAYBACK' | 'ERROR' | 'HEALTH';
-      payload: PlaybackRecord | ErrorRecord | HealthRecord;
+      type: number;
+      schemaVersion: number;
+      payload: unknown;
+      network?: { quality: number; downloadMbps?: number; uploadMbps?: number; connectionType?: string; signalStrengthDbm?: number };
     }> = [];
 
     for (const event of batch.events) {
-      const converted = this.convertEvent(event);
-      if (converted) {
-        eventsToStore.push(converted);
-      } else {
-        failedEventIds.push(event.eventId || 'unknown');
+      try {
+        const processed = this.processEvent(event);
+        if (processed) {
+          eventsToStore.push({
+            ...processed,
+            deviceFingerprint: batch.deviceFingerprint,
+            batchId: batchIdHex,
+          });
+        } else {
+          rejectedEventIds.push(event.eventId);
+        }
+      } catch (error) {
+        this.logger.warn(`Failed to process event: ${error}`);
+        rejectedEventIds.push(event.eventId);
       }
     }
 
     // Store valid events
     if (eventsToStore.length > 0) {
-      this.store.storeEvents(batch.deviceId, batch.batchId, eventsToStore);
+      this.store.storeEvents(batchIdHex, eventsToStore);
     }
 
-    const success = failedEventIds.length === 0;
+    const accepted = rejectedEventIds.length === 0;
 
-    if (success) {
-      this.logger.log(`Batch ${batch.batchId} accepted (${eventsToStore.length} events)`);
+    if (accepted) {
+      this.logger.log(`Batch ${batchIdHex} accepted (${eventsToStore.length} events)`);
     } else {
       this.logger.warn(
-        `Batch ${batch.batchId} partially accepted (${eventsToStore.length}/${batch.events.length} events)`,
+        `Batch ${batchIdHex} partially accepted (${eventsToStore.length}/${batch.events.length} events)`,
       );
     }
 
+    return this.createAck(
+      batch.batchId,
+      accepted,
+      rejectedEventIds,
+      accepted ? undefined : 'Some events failed to process',
+    );
+  }
+
+  /**
+   * Process a single event - decode CBOR payload
+   */
+  private processEvent(event: Event): {
+    eventId: string;
+    timestampMs: number;
+    type: number;
+    schemaVersion: number;
+    payload: unknown;
+    network?: { quality: number; downloadMbps?: number; uploadMbps?: number; connectionType?: string; signalStrengthDbm?: number };
+  } | null {
+    // Validate eventId (should be 16 bytes)
+    if (!event.eventId || event.eventId.length !== 16) {
+      this.logger.warn('Event missing valid event_id, skipping');
+      return null;
+    }
+
+    // Validate payload exists
+    if (!event.payload || event.payload.length === 0) {
+      this.logger.warn(`Event ${this.bytesToHex(event.eventId)} has no payload, skipping`);
+      return null;
+    }
+
+    // Decode CBOR payload
+    let decodedPayload: unknown;
+    try {
+      decodedPayload = cbor.decode(event.payload);
+    } catch (error) {
+      this.logger.warn(`Failed to decode CBOR payload for event ${this.bytesToHex(event.eventId)}: ${error}`);
+      return null;
+    }
+
     return {
-      accepted: success,
-      batchId: batch.batchId,
-      failedEventIds,
-      rejectionReason: success ? undefined : 'Some events failed to process',
+      eventId: this.bytesToHex(event.eventId),
+      timestampMs: event.timestampMs,
+      type: event.type,
+      schemaVersion: event.schemaVersion,
+      payload: decodedPayload,
+      network: event.network
+        ? {
+            quality: event.network.quality,
+            downloadMbps: event.network.downloadMbps,
+            uploadMbps: event.network.uploadMbps,
+            connectionType: event.network.connectionType,
+            signalStrengthDbm: event.network.signalStrengthDbm,
+          }
+        : undefined,
+    };
+  }
+
+  /**
+   * Create an Ack response
+   */
+  private createAck(
+    batchId: Uint8Array,
+    accepted: boolean,
+    rejectedEventIds: Uint8Array[],
+    errorMessage?: string,
+  ): Ack {
+    // Log error if present
+    if (errorMessage) {
+      this.logger.warn(`Batch rejected: ${errorMessage}`);
+    }
+
+    return {
+      batchId,
+      accepted,
+      rejectedEventIds,
+      throttleMs: 0,
       policy: this.defaultPolicy,
     };
   }
@@ -140,92 +189,43 @@ export class AnalyticsService {
   /**
    * Get the current upload policy
    */
-  getPolicy(): UploadPolicy {
+  getPolicy(): Policy {
     return this.defaultPolicy;
   }
 
   /**
-   * Convert protobuf event to internal format
+   * Convert bytes to hex string
    */
-  private convertEvent(event: AnalyticsEvent): {
-    eventId: string;
-    timestampMs: number;
-    category: 'PLAYBACK' | 'ERROR' | 'HEALTH';
-    payload: PlaybackRecord | ErrorRecord | HealthRecord;
-  } | null {
-    if (!event || !event.eventId) {
-      this.logger.warn('Event missing event_id, skipping');
-      return null;
-    }
-
-    const base = {
-      eventId: event.eventId,
-      timestampMs: event.timestampMs || Date.now(),
-    };
-
-    // Check payload oneof based on category
-    switch (event.category) {
-      case 1: // EVENT_CATEGORY_PLAYBACK
-        if (event.playback) {
-          return {
-            ...base,
-            category: 'PLAYBACK' as const,
-            payload: {
-              campaignId: event.playback.campaignId || '',
-              mediaId: event.playback.mediaId || '',
-              durationMs: event.playback.durationMs || 0,
-              completed: event.playback.completed || false,
-            },
-          };
-        }
-        break;
-      case 2: // EVENT_CATEGORY_ERROR
-        if (event.error) {
-          return {
-            ...base,
-            category: 'ERROR' as const,
-            payload: {
-              errorType: event.error.errorType || 'UNKNOWN',
-              message: event.error.message || '',
-              stackTrace: event.error.stackTrace,
-              component: event.error.component || 'unknown',
-              isFatal: event.error.isFatal || false,
-            },
-          };
-        }
-        break;
-      case 3: // EVENT_CATEGORY_HEALTH
-        if (event.health) {
-          return {
-            ...base,
-            category: 'HEALTH' as const,
-            payload: {
-              batteryLevel: event.health.batteryLevel,
-              storageFreeBytes: event.health.storageFreeBytes,
-              cpuUsage: event.health.cpuUsage,
-              memoryUsage: event.health.memoryUsage,
-              connectionQuality: this.mapConnectionQuality(event.health.connectionQuality),
-            },
-          };
-        }
-        break;
-    }
-
-    this.logger.warn(`Event ${event.eventId} has no recognized payload, skipping`);
-    return null;
+  private bytesToHex(bytes: Uint8Array): string {
+    return Buffer.from(bytes).toString('hex');
   }
 
   /**
-   * Map connection quality enum to string
+   * Get EventType string from number
    */
-  private mapConnectionQuality(quality: number): string {
+  getEventTypeString(type: number): string {
     const map: Record<number, string> = {
       0: 'UNSPECIFIED',
-      1: 'EXCELLENT',
-      2: 'GOOD',
+      1: 'ERROR',
+      2: 'IMPRESSION',
+      3: 'HEARTBEAT',
+      4: 'PERFORMANCE',
+      5: 'LIFECYCLE',
+    };
+    return map[type] || 'UNKNOWN';
+  }
+
+  /**
+   * Get ConnectionQuality string from number
+   */
+  getConnectionQualityString(quality: number): string {
+    const map: Record<number, string> = {
+      0: 'UNSPECIFIED',
+      1: 'OFFLINE',
+      2: 'POOR',
       3: 'FAIR',
-      4: 'POOR',
-      5: 'OFFLINE',
+      4: 'GOOD',
+      5: 'EXCELLENT',
     };
     return map[quality] || 'UNKNOWN';
   }

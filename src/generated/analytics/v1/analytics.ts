@@ -8,125 +8,143 @@
 import { GrpcMethod, GrpcStreamMethod } from "@nestjs/microservices";
 import { Observable } from "rxjs";
 
-/** EventCategory categorizes the type of analytics event */
-export enum EventCategory {
-  EVENT_CATEGORY_UNSPECIFIED = 0,
-  EVENT_CATEGORY_PLAYBACK = 1,
-  EVENT_CATEGORY_ERROR = 2,
-  EVENT_CATEGORY_HEALTH = 3,
+/** Event types for routing */
+export enum EventType {
+  EVENT_TYPE_UNSPECIFIED = 0,
+  /** ERROR - Urgent - upload on FAIR+ connections */
+  ERROR = 1,
+  /** IMPRESSION - Normal - upload on GOOD+ connections */
+  IMPRESSION = 2,
+  /** HEARTBEAT - Background - EXCELLENT only */
+  HEARTBEAT = 3,
+  /** PERFORMANCE - Background - EXCELLENT only */
+  PERFORMANCE = 4,
+  /** LIFECYCLE - Normal - upload on GOOD+ connections */
+  LIFECYCLE = 5,
   UNRECOGNIZED = -1,
 }
 
-/** ConnectionQuality represents network quality levels */
+/** Connection quality levels */
 export enum ConnectionQuality {
   CONNECTION_QUALITY_UNSPECIFIED = 0,
-  /** CONNECTION_QUALITY_EXCELLENT - >10 Mbps */
-  CONNECTION_QUALITY_EXCELLENT = 1,
-  /** CONNECTION_QUALITY_GOOD - >5 Mbps */
-  CONNECTION_QUALITY_GOOD = 2,
-  /** CONNECTION_QUALITY_FAIR - >1 Mbps */
-  CONNECTION_QUALITY_FAIR = 3,
-  /** CONNECTION_QUALITY_POOR - <1 Mbps */
-  CONNECTION_QUALITY_POOR = 4,
-  CONNECTION_QUALITY_OFFLINE = 5,
+  /** OFFLINE - No upload */
+  OFFLINE = 1,
+  /** POOR - < 1 Mbps, errors only */
+  POOR = 2,
+  /** FAIR - 1-5 Mbps, urgent only */
+  FAIR = 3,
+  /** GOOD - 5-20 Mbps, normal uploads */
+  GOOD = 4,
+  /** EXCELLENT - > 20 Mbps, all events */
+  EXCELLENT = 5,
   UNRECOGNIZED = -1,
 }
 
-/** AnalyticsBatch represents a batch of events sent by a device */
-export interface AnalyticsBatch {
-  deviceId: string;
-  batchId: string;
+/** Event = Tiny envelope + payload bytes */
+export interface Event {
+  /** 16-byte UUID (binary) */
+  eventId: Uint8Array;
+  /** 8 bytes fixed */
   timestampMs: number;
-  events: AnalyticsEvent[];
-  networkContext?: NetworkContext | undefined;
-  queueStatus?: QueueStatus | undefined;
+  /** Enum = 1 byte varint */
+  type: EventType;
+  /** 0x00MMmmPP = major.minor.patch */
+  schemaVersion: number;
+  /** CBOR/MsgPack/JSON encoded data */
+  payload: Uint8Array;
+  /** Optional: network at event time */
+  network?: NetworkContext | undefined;
 }
 
-/** AnalyticsEvent represents a single analytics event */
-export interface AnalyticsEvent {
-  eventId: string;
-  timestampMs: number;
-  category: EventCategory;
-  playback?: PlaybackEvent | undefined;
-  error?: ErrorEvent | undefined;
-  health?: HealthEvent | undefined;
+export interface Batch {
+  /** 16-byte UUID */
+  batchId: Uint8Array;
+  /** Multiple events */
+  events: Event[];
+  /** 4-byte hash vs string */
+  deviceFingerprint: number;
+  /** Backpressure signal */
+  queue?:
+    | QueueStatus
+    | undefined;
+  /** Batch creation time */
+  sentAtMs: number;
 }
 
-/** PlaybackEvent tracks video/image campaign playback */
-export interface PlaybackEvent {
-  campaignId: string;
-  mediaId: string;
-  durationMs: number;
-  completed: boolean;
+/** Status of the client's local event queue */
+export interface QueueStatus {
+  /** Number of events waiting to be sent */
+  pendingEvents: number;
+  /** Age of oldest pending event (hours) */
+  oldestEventAgeHours: number;
+  /** True if queue is growing faster than draining */
+  isBackpressure: boolean;
 }
 
-/** ErrorEvent tracks application errors */
-export interface ErrorEvent {
-  errorType: string;
-  message: string;
-  stackTrace: string;
-  component: string;
-  isFatal: boolean;
-}
-
-/** HealthEvent tracks device health metrics */
-export interface HealthEvent {
-  batteryLevel: number;
-  storageFreeBytes: number;
-  cpuUsage: number;
-  memoryUsage: number;
-  connectionQuality: ConnectionQuality;
-}
-
-/** NetworkContext provides network conditions at upload time */
 export interface NetworkContext {
   quality: ConnectionQuality;
-  downloadSpeedMbps: number;
-  latencyMs: number;
+  downloadMbps: number;
+  uploadMbps: number;
+  /** wifi, ethernet, cellular, unknown */
+  connectionType: string;
+  /** For wifi/cellular */
+  signalStrengthDbm: number;
 }
 
-/** QueueStatus describes the device's local analytics queue state */
-export interface QueueStatus {
-  pendingCount: number;
-  oldestEventHours: number;
-}
-
-/** BatchAck is the server's response to a batch upload */
-export interface BatchAck {
+export interface Ack {
+  batchId: Uint8Array;
   accepted: boolean;
-  batchId: string;
-  failedEventIds: string[];
-  rejectionReason: string;
-  policy?: UploadPolicy | undefined;
+  /** 16-byte UUIDs */
+  rejectedEventIds: Uint8Array[];
+  /** Server backpressure */
+  throttleMs: number;
+  /** Updated policy (optional) */
+  policy?: Policy | undefined;
 }
 
-/** UploadPolicy provides server-side sync configuration to the client */
-export interface UploadPolicy {
+export interface Policy {
+  /** Minimum quality for uploads */
+  minQuality: ConnectionQuality;
+  /** Max events per batch */
   maxBatchSize: number;
-  syncIntervalSeconds: number;
-  retryDelaysSeconds: number[];
+  /** Force upload if older */
+  maxQueueAgeHours: number;
+  /** Suggested upload interval */
+  uploadIntervalSeconds: number;
 }
 
-/** AnalyticsService handles batch uploads of analytics events from devices */
+/** Analytics service - client reports events to server */
 
 export interface AnalyticsServiceClient {
-  uploadBatch(request: AnalyticsBatch): Observable<BatchAck>;
+  /** Fire-and-forget batch upload (primary method) */
+
+  ingest(request: Batch): Observable<Ack>;
+
+  /** Optional: long-lived stream for real-time */
+
+  stream(request: Observable<Event>): Observable<Ack>;
 }
 
-/** AnalyticsService handles batch uploads of analytics events from devices */
+/** Analytics service - client reports events to server */
 
 export interface AnalyticsServiceController {
-  uploadBatch(request: AnalyticsBatch): Promise<BatchAck> | Observable<BatchAck> | BatchAck;
+  /** Fire-and-forget batch upload (primary method) */
+
+  ingest(request: Batch): Promise<Ack> | Observable<Ack> | Ack;
+
+  /** Optional: long-lived stream for real-time */
+
+  stream(request: Observable<Event>): Observable<Ack>;
 }
 
 export function AnalyticsServiceControllerMethods() {
   return function (constructor: Function) {
-    const grpcMethods: string[] = ["uploadBatch"];
+    const grpcMethods: string[] = ["ingest"];
     for (const method of grpcMethods) {
       const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
       GrpcMethod("AnalyticsService", method)(constructor.prototype[method], method, descriptor);
     }
-    const grpcStreamMethods: string[] = [];
+    const grpcStreamMethods: string[] = ["stream"];
     for (const method of grpcStreamMethods) {
       const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
       GrpcStreamMethod("AnalyticsService", method)(constructor.prototype[method], method, descriptor);

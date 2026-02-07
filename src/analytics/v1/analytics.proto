@@ -1,103 +1,106 @@
+// Copyright (c) Localize Technologies, Inc. All rights reserved.
+
+// Analytics v2 Service - Minimal envelope + CBOR payload
+// Designed for minimal payload size in challenging network environments
+
 syntax = "proto3";
 
 package analytics.v1;
 
-// AnalyticsService handles batch uploads of analytics events from devices
+// Analytics service - client reports events to server
 service AnalyticsService {
-  rpc UploadBatch(AnalyticsBatch) returns (BatchAck);
+  // Fire-and-forget batch upload (primary method)
+  rpc Ingest(Batch) returns (Ack);
+  
+  // Optional: long-lived stream for real-time
+  rpc Stream(stream Event) returns (stream Ack);
 }
 
-// AnalyticsBatch represents a batch of events sent by a device
-message AnalyticsBatch {
-  string device_id = 1;
-  string batch_id = 2;
-  int64 timestamp_ms = 3;
-  repeated AnalyticsEvent events = 4;
-  NetworkContext network_context = 5;
-  QueueStatus queue_status = 6;
+// ============================================================================
+// Event Envelope
+// ============================================================================
+
+// Event = Tiny envelope + payload bytes
+message Event {
+  bytes event_id = 1;           // 16-byte UUID (binary)
+  fixed64 timestamp_ms = 2;     // 8 bytes fixed
+  EventType type = 3;           // Enum = 1 byte varint
+  fixed32 schema_version = 4;   // 0x00MMmmPP = major.minor.patch
+  bytes payload = 5;            // CBOR/MsgPack/JSON encoded data
+  NetworkContext network = 6;   // Optional: network at event time
 }
 
-// AnalyticsEvent represents a single analytics event
-message AnalyticsEvent {
-  string event_id = 1;
-  int64 timestamp_ms = 2;
-  EventCategory category = 3;
-  oneof payload {
-    PlaybackEvent playback = 10;
-    ErrorEvent error = 11;
-    HealthEvent health = 12;
-  }
+// Event types for routing
+enum EventType {
+  EVENT_TYPE_UNSPECIFIED = 0;
+  ERROR = 1;         // Urgent - upload on FAIR+ connections
+  IMPRESSION = 2;    // Normal - upload on GOOD+ connections
+  HEARTBEAT = 3;     // Background - EXCELLENT only
+  PERFORMANCE = 4;   // Background - EXCELLENT only
+  LIFECYCLE = 5;     // Normal - upload on GOOD+ connections
 }
 
-// EventCategory categorizes the type of analytics event
-enum EventCategory {
-  EVENT_CATEGORY_UNSPECIFIED = 0;
-  EVENT_CATEGORY_PLAYBACK = 1;
-  EVENT_CATEGORY_ERROR = 2;
-  EVENT_CATEGORY_HEALTH = 3;
+// ============================================================================
+// Batching
+// ============================================================================
+
+message Batch {
+  bytes batch_id = 1;               // 16-byte UUID
+  repeated Event events = 2;        // Multiple events
+  fixed32 device_fingerprint = 3;   // 4-byte hash vs string
+  QueueStatus queue = 4;            // Backpressure signal
+  fixed64 sent_at_ms = 5;           // Batch creation time
 }
 
-// PlaybackEvent tracks video/image campaign playback
-message PlaybackEvent {
-  string campaign_id = 1;
-  string media_id = 2;
-  int64 duration_ms = 3;
-  bool completed = 4;
+// Status of the client's local event queue
+message QueueStatus {
+  // Number of events waiting to be sent
+  int32 pending_events = 1;
+  
+  // Age of oldest pending event (hours)
+  int32 oldest_event_age_hours = 2;
+  
+  // True if queue is growing faster than draining
+  bool is_backpressure = 3;
 }
 
-// ErrorEvent tracks application errors
-message ErrorEvent {
-  string error_type = 1;
-  string message = 2;
-  string stack_trace = 3;
-  string component = 4;
-  bool is_fatal = 5;
-}
+// ============================================================================
+// Network Context
+// ============================================================================
 
-// HealthEvent tracks device health metrics
-message HealthEvent {
-  float battery_level = 1;
-  int64 storage_free_bytes = 2;
-  float cpu_usage = 3;
-  float memory_usage = 4;
-  ConnectionQuality connection_quality = 5;
-}
-
-// NetworkContext provides network conditions at upload time
 message NetworkContext {
   ConnectionQuality quality = 1;
-  float download_speed_mbps = 2;
-  int64 latency_ms = 3;
+  double download_mbps = 2;
+  double upload_mbps = 3;
+  string connection_type = 4;      // wifi, ethernet, cellular, unknown
+  int32 signal_strength_dbm = 5;   // For wifi/cellular
 }
 
-// ConnectionQuality represents network quality levels
+// Connection quality levels
 enum ConnectionQuality {
   CONNECTION_QUALITY_UNSPECIFIED = 0;
-  CONNECTION_QUALITY_EXCELLENT = 1;  // >10 Mbps
-  CONNECTION_QUALITY_GOOD = 2;       // >5 Mbps
-  CONNECTION_QUALITY_FAIR = 3;       // >1 Mbps
-  CONNECTION_QUALITY_POOR = 4;       // <1 Mbps
-  CONNECTION_QUALITY_OFFLINE = 5;
+  OFFLINE = 1;       // No upload
+  POOR = 2;          // < 1 Mbps, errors only
+  FAIR = 3;          // 1-5 Mbps, urgent only
+  GOOD = 4;          // 5-20 Mbps, normal uploads
+  EXCELLENT = 5;     // > 20 Mbps, all events
 }
 
-// QueueStatus describes the device's local analytics queue state
-message QueueStatus {
-  int32 pending_count = 1;
-  int32 oldest_event_hours = 2;
+// ============================================================================
+// Server Response
+// ============================================================================
+
+message Ack {
+  bytes batch_id = 1;
+  bool accepted = 2;
+  repeated bytes rejected_event_ids = 3;  // 16-byte UUIDs
+  uint32 throttle_ms = 4;     // Server backpressure
+  Policy policy = 5;          // Updated policy (optional)
 }
 
-// BatchAck is the server's response to a batch upload
-message BatchAck {
-  bool accepted = 1;
-  string batch_id = 2;
-  repeated string failed_event_ids = 3;
-  string rejection_reason = 4;
-  UploadPolicy policy = 5;
-}
-
-// UploadPolicy provides server-side sync configuration to the client
-message UploadPolicy {
-  int32 max_batch_size = 1;
-  int32 sync_interval_seconds = 2;
-  repeated int32 retry_delays_seconds = 3;
+message Policy {
+  ConnectionQuality min_quality = 1;   // Minimum quality for uploads
+  int32 max_batch_size = 2;            // Max events per batch
+  int32 max_queue_age_hours = 3;       // Force upload if older
+  int32 upload_interval_seconds = 4;   // Suggested upload interval
 }

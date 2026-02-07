@@ -1,12 +1,16 @@
 // Standalone test runner using Bun runtime (not bun test)
 import { Test, TestingModule } from '@nestjs/testing';
 import { AppModule } from '../src/app.module';
-import { GrpcTestClient, delay } from './utils/grpc-client.util';
+import { GrpcTestClient } from './utils/grpc-client.util';
+import { delay } from './helpers/async';
+import { AnalyticsFixture } from './fixtures/analytics.fixture';
 
 let passed = 0;
 let failed = 0;
 
-function test(name: string, fn: () => Promise<void>) {
+import type { TestCase } from './types/test.types';
+
+function test(name: string, fn: () => Promise<void>): TestCase {
   return { name, fn };
 }
 
@@ -53,7 +57,7 @@ async function runTests() {
   }
 
   // Helper to create a fleet and return the ID
-  async function createFleet(name: string, deviceIds: string[] = []) {
+  async function createFleet(name: string, deviceIds: string[] = []): Promise<string> {
     const res = await fetch(`${httpUrl}/fleets`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -63,7 +67,17 @@ async function runTests() {
     return body.fleet.id;
   }
 
-  const tests = [
+  // Helper to upload analytics batch using fixtures
+  async function uploadAnalyticsBatch(deviceId: string, events: any[]) {
+    return grpcClient.uploadBatch({
+      device_id: deviceId,
+      batch_id: AnalyticsFixture.generateBatchId(),
+      timestamp_ms: Date.now(),
+      events,
+    });
+  }
+
+  const tests: TestCase[] = [
     // Command Tests - Happy Path
     test('Command: send clock command and receive ACK', async () => {
       const deviceId = `clock-${Date.now()}`;
@@ -137,26 +151,28 @@ async function runTests() {
 
     // Analytics Tests - gRPC UploadBatch
     test('Analytics: upload valid playback batch via gRPC', async () => {
-      const batchId = `batch-${Date.now()}`;
+      const batchId = AnalyticsFixture.generateBatchId();
       const deviceId = `analytics-device-${Date.now()}`;
+      const event = AnalyticsFixture.createPlaybackEvent({
+        campaignId: 'campaign-001',
+        mediaId: 'media-001',
+      });
       
       const response = await grpcClient.uploadBatch({
         device_id: deviceId,
         batch_id: batchId,
         timestamp_ms: Date.now(),
-        events: [
-          {
-            event_id: `evt-${Date.now()}-1`,
-            timestamp_ms: Date.now(),
-            category: 1, // PLAYBACK
-            playback: {
-              campaign_id: 'campaign-001',
-              media_id: 'media-001',
-              duration_ms: 5000,
-              completed: true,
-            },
+        events: [{
+          event_id: event.eventId,
+          timestamp_ms: event.timestampMs,
+          category: 1, // PLAYBACK
+          playback: {
+            campaign_id: event.playback!.campaignId,
+            media_id: event.playback!.mediaId,
+            duration_ms: event.playback!.durationMs,
+            completed: event.playback!.completed,
           },
-        ],
+        }],
         network_context: {
           quality: 2, // GOOD
           download_speed_mbps: 10.5,
@@ -226,25 +242,18 @@ async function runTests() {
     test('Analytics: HTTP GET /analytics/devices returns list', async () => {
       const deviceId = `http-analytics-${Date.now()}`;
       
-      // First upload some analytics
-      await grpcClient.uploadBatch({
-        device_id: deviceId,
-        batch_id: `batch-${Date.now()}`,
+      // First upload some analytics using fixture
+      await uploadAnalyticsBatch(deviceId, [{
+        event_id: AnalyticsFixture.generateEventId(),
         timestamp_ms: Date.now(),
-        events: [
-          {
-            event_id: `evt-${Date.now()}`,
-            timestamp_ms: Date.now(),
-            category: 1,
-            playback: {
-              campaign_id: 'campaign-http',
-              media_id: 'media-http',
-              duration_ms: 3000,
-              completed: true,
-            },
-          },
-        ],
-      });
+        category: 1,
+        playback: {
+          campaign_id: 'campaign-http',
+          media_id: 'media-http',
+          duration_ms: 3000,
+          completed: true,
+        },
+      }]);
 
       const response = await fetch(`${httpUrl}/analytics/devices`);
       if (response.status !== 200) throw new Error(`Expected 200, got ${response.status}`);
@@ -260,25 +269,20 @@ async function runTests() {
     test('Analytics: HTTP GET /analytics/devices/:id/events', async () => {
       const deviceId = `http-events-${Date.now()}`;
       
-      await grpcClient.uploadBatch({
-        device_id: deviceId,
-        batch_id: `batch-${Date.now()}`,
-        timestamp_ms: Date.now(),
-        events: [
-          {
-            event_id: `evt-${Date.now()}-1`,
-            timestamp_ms: Date.now(),
-            category: 1,
-            playback: { campaign_id: 'c1', media_id: 'm1', duration_ms: 1000, completed: true },
-          },
-          {
-            event_id: `evt-${Date.now()}-2`,
-            timestamp_ms: Date.now(),
-            category: 1,
-            playback: { campaign_id: 'c2', media_id: 'm2', duration_ms: 2000, completed: true },
-          },
-        ],
-      });
+      await uploadAnalyticsBatch(deviceId, [
+        {
+          event_id: AnalyticsFixture.generateEventId(),
+          timestamp_ms: Date.now(),
+          category: 1,
+          playback: { campaign_id: 'c1', media_id: 'm1', duration_ms: 1000, completed: true },
+        },
+        {
+          event_id: AnalyticsFixture.generateEventId(),
+          timestamp_ms: Date.now(),
+          category: 1,
+          playback: { campaign_id: 'c2', media_id: 'm2', duration_ms: 2000, completed: true },
+        },
+      ]);
 
       const response = await fetch(`${httpUrl}/analytics/devices/${deviceId}/events`);
       if (response.status !== 200) throw new Error(`Expected 200, got ${response.status}`);
@@ -291,17 +295,13 @@ async function runTests() {
 
     test('Analytics: HTTP GET /analytics/devices/:id/summary', async () => {
       const deviceId = `http-summary-${Date.now()}`;
+      const timestamp = Date.now();
       
-      await grpcClient.uploadBatch({
-        device_id: deviceId,
-        batch_id: `batch-${Date.now()}`,
-        timestamp_ms: Date.now(),
-        events: [
-          { event_id: `evt-1`, timestamp_ms: Date.now(), category: 1, playback: { campaign_id: 'c1', media_id: 'm1', duration_ms: 1000, completed: true } },
-          { event_id: `evt-2`, timestamp_ms: Date.now(), category: 2, error: { error_type: 'TEST_ERROR', message: 'test', component: 'test', is_fatal: false } },
-          { event_id: `evt-3`, timestamp_ms: Date.now(), category: 3, health: { battery_level: 50, storage_free_bytes: 1000000, cpu_usage: 10, memory_usage: 20, connection_quality: 2 } },
-        ],
-      });
+      await uploadAnalyticsBatch(deviceId, [
+        { event_id: AnalyticsFixture.generateEventId(), timestamp_ms: timestamp, category: 1, playback: { campaign_id: 'c1', media_id: 'm1', duration_ms: 1000, completed: true } },
+        { event_id: AnalyticsFixture.generateEventId(), timestamp_ms: timestamp, category: 2, error: { error_type: 'TEST_ERROR', message: 'test', component: 'test', is_fatal: false } },
+        { event_id: AnalyticsFixture.generateEventId(), timestamp_ms: timestamp, category: 3, health: { battery_level: 50, storage_free_bytes: 1000000, cpu_usage: 10, memory_usage: 20, connection_quality: 2 } },
+      ]);
 
       const response = await fetch(`${httpUrl}/analytics/devices/${deviceId}/summary`);
       if (response.status !== 200) throw new Error(`Expected 200, got ${response.status}`);
@@ -322,16 +322,11 @@ async function runTests() {
       const deviceId = `fleet-device-${Date.now()}`;
       const fleetId = await createFleet('Analytics Test Fleet', [deviceId]);
       
-      // Upload analytics for the fleet device
-      await grpcClient.uploadBatch({
-        device_id: deviceId,
-        batch_id: `batch-${Date.now()}`,
-        timestamp_ms: Date.now(),
-        events: [
-          { event_id: `evt-1`, timestamp_ms: Date.now(), category: 1, playback: { campaign_id: 'c1', media_id: 'm1', duration_ms: 5000, completed: true } },
-          { event_id: `evt-2`, timestamp_ms: Date.now(), category: 2, error: { error_type: 'NETWORK', message: 'timeout', component: 'Downloader', is_fatal: false } },
-        ],
-      });
+      // Upload analytics for the fleet device using helper
+      await uploadAnalyticsBatch(deviceId, [
+        { event_id: AnalyticsFixture.generateEventId(), timestamp_ms: Date.now(), category: 1, playback: { campaign_id: 'c1', media_id: 'm1', duration_ms: 5000, completed: true } },
+        { event_id: AnalyticsFixture.generateEventId(), timestamp_ms: Date.now(), category: 2, error: { error_type: 'NETWORK', message: 'timeout', component: 'Downloader', is_fatal: false } },
+      ]);
 
       const response = await fetch(`${httpUrl}/analytics/fleets/${fleetId}`);
       if (response.status !== 200) throw new Error(`Expected 200, got ${response.status}`);
@@ -353,16 +348,11 @@ async function runTests() {
       const deviceId = `playback-device-${Date.now()}`;
       const fleetId = await createFleet('Playback Test Fleet', [deviceId]);
       
-      await grpcClient.uploadBatch({
-        device_id: deviceId,
-        batch_id: `batch-${Date.now()}`,
-        timestamp_ms: Date.now(),
-        events: [
-          { event_id: `evt-1`, timestamp_ms: Date.now(), category: 1, playback: { campaign_id: 'campaign-1', media_id: 'm1', duration_ms: 5000, completed: true } },
-          { event_id: `evt-2`, timestamp_ms: Date.now(), category: 1, playback: { campaign_id: 'campaign-1', media_id: 'm2', duration_ms: 3000, completed: true } },
-          { event_id: `evt-3`, timestamp_ms: Date.now(), category: 1, playback: { campaign_id: 'campaign-2', media_id: 'm3', duration_ms: 4000, completed: true } },
-        ],
-      });
+      await uploadAnalyticsBatch(deviceId, [
+        { event_id: AnalyticsFixture.generateEventId(), timestamp_ms: Date.now(), category: 1, playback: { campaign_id: 'campaign-1', media_id: 'm1', duration_ms: 5000, completed: true } },
+        { event_id: AnalyticsFixture.generateEventId(), timestamp_ms: Date.now(), category: 1, playback: { campaign_id: 'campaign-1', media_id: 'm2', duration_ms: 3000, completed: true } },
+        { event_id: AnalyticsFixture.generateEventId(), timestamp_ms: Date.now(), category: 1, playback: { campaign_id: 'campaign-2', media_id: 'm3', duration_ms: 4000, completed: true } },
+      ]);
 
       const response = await fetch(`${httpUrl}/analytics/fleets/${fleetId}/playback`);
       if (response.status !== 200) throw new Error(`Expected 200, got ${response.status}`);
@@ -377,16 +367,11 @@ async function runTests() {
       const deviceId = `error-device-${Date.now()}`;
       const fleetId = await createFleet('Error Test Fleet', [deviceId]);
       
-      await grpcClient.uploadBatch({
-        device_id: deviceId,
-        batch_id: `batch-${Date.now()}`,
-        timestamp_ms: Date.now(),
-        events: [
-          { event_id: `evt-1`, timestamp_ms: Date.now(), category: 2, error: { error_type: 'NETWORK', message: 'timeout', component: 'Downloader', is_fatal: false } },
-          { event_id: `evt-2`, timestamp_ms: Date.now(), category: 2, error: { error_type: 'NETWORK', message: 'timeout', component: 'Downloader', is_fatal: false } },
-          { event_id: `evt-3`, timestamp_ms: Date.now(), category: 2, error: { error_type: 'PARSE', message: 'invalid json', component: 'Parser', is_fatal: true } },
-        ],
-      });
+      await uploadAnalyticsBatch(deviceId, [
+        { event_id: AnalyticsFixture.generateEventId(), timestamp_ms: Date.now(), category: 2, error: { error_type: 'NETWORK', message: 'timeout', component: 'Downloader', is_fatal: false } },
+        { event_id: AnalyticsFixture.generateEventId(), timestamp_ms: Date.now(), category: 2, error: { error_type: 'NETWORK', message: 'timeout', component: 'Downloader', is_fatal: false } },
+        { event_id: AnalyticsFixture.generateEventId(), timestamp_ms: Date.now(), category: 2, error: { error_type: 'PARSE', message: 'invalid json', component: 'Parser', is_fatal: true } },
+      ]);
 
       const response = await fetch(`${httpUrl}/analytics/fleets/${fleetId}/errors`);
       if (response.status !== 200) throw new Error(`Expected 200, got ${response.status}`);

@@ -294,27 +294,5 @@ export class GrpcTestClient {
   }
 }
 
-// Helper to wait for a specific condition
-export function waitFor<T>(
-  getter: () => T | undefined,
-  timeoutMs: number = 5000,
-): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const startTime = Date.now();
-    const interval = setInterval(() => {
-      const value = getter();
-      if (value !== undefined) {
-        clearInterval(interval);
-        resolve(value);
-      } else if (Date.now() - startTime > timeoutMs) {
-        clearInterval(interval);
-        reject(new Error('Timeout waiting for condition'));
-      }
-    }, 50);
-  });
-}
-
-// Helper to delay
-export function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
+// Re-export helpers for backward compatibility
+export { delay, waitFor } from '../helpers/async';

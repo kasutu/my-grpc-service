@@ -8,11 +8,13 @@ import {
   HttpException,
   HttpStatus,
 } from '@nestjs/common';
+import * as cbor from 'cbor';
 import { AnalyticsStoreService } from './services/analytics-store.service';
 import { FleetAnalyticsService } from './services/fleet-analytics.service';
 import { FleetService } from '../fleet/fleet.service';
 import { AnalyticsService } from './analytics.service';
-import { AnalyticsMapper } from './interfaces/analytics.mapper';
+import type { Batch, Event } from '../generated/analytics/v1/analytics';
+import { EventType, ConnectionQuality } from '../generated/analytics/v1/analytics';
 
 @Controller('analytics')
 export class AnalyticsHttpController {
@@ -26,6 +28,7 @@ export class AnalyticsHttpController {
       return new Date().toISOString();
     }
   }
+
   constructor(
     private readonly analyticsService: AnalyticsService,
     private readonly analyticsStore: AnalyticsStoreService,
@@ -34,120 +37,207 @@ export class AnalyticsHttpController {
   ) {}
 
   // ─────────────────────────────────────────────────────────────
-  // Event Submission
+  // Event Ingestion
   // ─────────────────────────────────────────────────────────────
 
   /**
    * Submit events via HTTP (auto-creates batch)
+   * Accepts JSON events that will be encoded to CBOR
    */
-  @Post('events/:deviceId')
-  async submitEvents(
-    @Param('deviceId') deviceId: string,
+  @Post('ingest/:deviceFingerprint')
+  async ingestEvents(
+    @Param('deviceFingerprint') deviceFingerprintStr: string,
     @Body()
     body: {
       events: Array<{
-        event_id: string;
+        event_id: string;      // hex string of 16-byte UUID
         timestamp_ms: number;
-        category: string;
-        playback?: {
-          campaign_id: string;
-          media_id: string;
-          duration_ms: number;
-          completed: boolean;
-        };
-        error?: {
-          error_type: string;
-          message: string;
-          component: string;
-          is_fatal: boolean;
-        };
-        health?: {
-          battery_level: number;
-          storage_free_bytes: number;
-          cpu_usage: number;
-          memory_usage: number;
-          connection_quality: number;
+        type: string;          // 'ERROR' | 'IMPRESSION' | 'HEARTBEAT' | 'PERFORMANCE' | 'LIFECYCLE'
+        schema_version?: number;
+        payload: unknown;      // Will be CBOR encoded
+        network?: {
+          quality: string;     // 'OFFLINE' | 'POOR' | 'FAIR' | 'GOOD' | 'EXCELLENT'
+          download_mbps?: number;
+          upload_mbps?: number;
+          connection_type?: string;
+          signal_strength_dbm?: number;
         };
       }>;
-      network_context?: {
-        quality: number;
-        download_speed_mbps: number;
-        latency_ms: number;
-      };
-      queue_status?: {
-        pending_count: number;
-        oldest_event_hours: number;
+      queue?: {
+        pending_events?: number;
+        oldest_event_age_hours?: number;
+        is_backpressure?: boolean;
       };
     },
   ) {
-    const batch = AnalyticsMapper.toAnalyticsBatch({
-      device_id: deviceId,
-      batch_id: `http-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-      timestamp_ms: Date.now(),
-      events: body.events ?? [],
-      network_context: body.network_context,
-      queue_status: body.queue_status,
-    });
+    const deviceFingerprint = parseInt(deviceFingerprintStr, 10);
+    if (isNaN(deviceFingerprint)) {
+      throw new HttpException('Invalid device fingerprint', HttpStatus.BAD_REQUEST);
+    }
 
-    const result = this.analyticsService.uploadBatch(batch);
+    // Generate batch ID
+    const batchId = Buffer.from(this.generateUuid());
+
+    // Convert JSON events to proto Events with CBOR payloads
+    const events: Event[] = [];
+    const rejectedEvents: string[] = [];
+
+    for (const eventData of body.events ?? []) {
+      try {
+        // Convert event_id from hex to bytes
+        const eventId = Buffer.from(eventData.event_id.replace(/-/g, ''), 'hex');
+        if (eventId.length !== 16) {
+          rejectedEvents.push(eventData.event_id);
+          continue;
+        }
+
+        // Encode payload to CBOR
+        const payload = cbor.encode(eventData.payload);
+
+        // Convert type string to enum
+        const type = this.parseEventType(eventData.type);
+
+        // Parse schema version (default to 1.0.0 = 0x00010000)
+        const schemaVersion = eventData.schema_version ?? 0x00010000;
+
+        // Parse network context
+        const network = eventData.network
+          ? {
+              quality: this.parseConnectionQuality(eventData.network.quality),
+              downloadMbps: eventData.network.download_mbps ?? 0,
+              uploadMbps: eventData.network.upload_mbps ?? 0,
+              connectionType: eventData.network.connection_type ?? '',
+              signalStrengthDbm: eventData.network.signal_strength_dbm ?? 0,
+            }
+          : undefined;
+
+        events.push({
+          eventId,
+          timestampMs: eventData.timestamp_ms ?? Date.now(),
+          type,
+          schemaVersion,
+          payload,
+          network,
+        });
+      } catch (error) {
+        rejectedEvents.push(eventData.event_id);
+      }
+    }
+
+    // Create batch
+    const batch: Batch = {
+      batchId,
+      events,
+      deviceFingerprint,
+      queue: body.queue
+        ? {
+            pendingEvents: body.queue.pending_events ?? 0,
+            oldestEventAgeHours: body.queue.oldest_event_age_hours ?? 0,
+            isBackpressure: body.queue.is_backpressure ?? false,
+          }
+        : undefined,
+      sentAtMs: Date.now(),
+    };
+
+    // Process batch
+    const result = this.analyticsService.ingest(batch);
 
     return {
       accepted: result.accepted,
-      batch_id: result.batchId,
+      batch_id: batchId.toString('hex'),
       events_received: body.events?.length ?? 0,
-      failed_event_ids: result.failedEventIds,
+      events_stored: events.length,
+      rejected_event_ids: rejectedEvents,
       policy: result.policy
         ? {
+            min_quality: result.policy.minQuality,
             max_batch_size: result.policy.maxBatchSize,
-            sync_interval_seconds: result.policy.syncIntervalSeconds,
+            max_queue_age_hours: result.policy.maxQueueAgeHours,
+            upload_interval_seconds: result.policy.uploadIntervalSeconds,
           }
         : undefined,
     };
   }
 
   /**
+   * Get server upload policy
+   */
+  @Get('policy')
+  getPolicy() {
+    const policy = this.analyticsService.getPolicy();
+    return {
+      min_quality: policy.minQuality,
+      max_batch_size: policy.maxBatchSize,
+      max_queue_age_hours: policy.maxQueueAgeHours,
+      upload_interval_seconds: policy.uploadIntervalSeconds,
+    };
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // Event Querying
+  // ─────────────────────────────────────────────────────────────
+
+  /**
    * Query events with filters
    */
   @Get('events')
   queryEvents(
-    @Query('device_id') deviceId?: string,
-    @Query('category') category?: string,
+    @Query('device_fingerprint') deviceFingerprintStr?: string,
+    @Query('type') typeStr?: string,
     @Query('from') fromTimestamp?: string,
     @Query('to') toTimestamp?: string,
+    @Query('limit') limitStr?: string,
   ) {
-    let events = this.analyticsStore.getAllEvents();
+    const deviceFingerprint = deviceFingerprintStr ? parseInt(deviceFingerprintStr, 10) : undefined;
+    const type = typeStr ? this.parseEventType(typeStr) : undefined;
+    const startTimeMs = fromTimestamp ? parseInt(fromTimestamp, 10) : undefined;
+    const endTimeMs = toTimestamp ? parseInt(toTimestamp, 10) : undefined;
+    const limit = parseInt(limitStr || '100', 10);
 
-    if (deviceId) {
-      events = events.filter((e) => e.deviceId === deviceId);
-    }
+    let events = this.analyticsStore.getAllEvents({
+      deviceFingerprint,
+      type,
+      startTimeMs,
+      endTimeMs,
+    });
 
-    if (category) {
-      events = events.filter((e) => e.category === category);
-    }
-
-    if (fromTimestamp) {
-      const from = parseInt(fromTimestamp, 10);
-      events = events.filter((e) => e.timestampMs >= from);
-    }
-
-    if (toTimestamp) {
-      const to = parseInt(toTimestamp, 10);
-      events = events.filter((e) => e.timestampMs <= to);
-    }
-
-    // Sort by timestamp descending
-    events.sort((a, b) => b.timestampMs - a.timestampMs);
+    events = events.slice(0, limit);
 
     return {
       total: events.length,
       events: events.map((e) => ({
         eventId: e.eventId,
-        deviceId: e.deviceId,
+        deviceFingerprint: e.deviceFingerprint,
         batchId: e.batchId,
         timestamp: this.safeDate(e.timestampMs),
-        category: e.category,
+        type: this.analyticsService.getEventTypeString(e.type),
+        schemaVersion: this.formatSchemaVersion(e.schemaVersion),
         payload: e.payload,
+        network: e.network,
       })),
+    };
+  }
+
+  /**
+   * Get a single event by ID
+   */
+  @Get('events/:eventId')
+  getEvent(@Param('eventId') eventId: string) {
+    const event = this.analyticsStore.getEvent(eventId);
+    if (!event) {
+      throw new HttpException('Event not found', HttpStatus.NOT_FOUND);
+    }
+
+    return {
+      eventId: event.eventId,
+      deviceFingerprint: event.deviceFingerprint,
+      batchId: event.batchId,
+      timestamp: this.safeDate(event.timestampMs),
+      type: this.analyticsService.getEventTypeString(event.type),
+      schemaVersion: this.formatSchemaVersion(event.schemaVersion),
+      payload: event.payload,
+      network: event.network,
+      receivedAt: this.safeDate(event.receivedAt),
     };
   }
 
@@ -158,29 +248,35 @@ export class AnalyticsHttpController {
   /**
    * Get all events for a specific device
    */
-  @Get('devices/:deviceId/events')
+  @Get('devices/:deviceFingerprint/events')
   getDeviceEvents(
-    @Param('deviceId') deviceId: string,
-    @Query('category') category?: 'PLAYBACK' | 'ERROR' | 'HEALTH',
+    @Param('deviceFingerprint') deviceFingerprintStr: string,
+    @Query('type') typeStr?: string,
     @Query('limit') limitStr?: string,
   ) {
-    let events = this.analyticsStore.getEventsForDevice(deviceId);
+    const deviceFingerprint = parseInt(deviceFingerprintStr, 10);
+    if (isNaN(deviceFingerprint)) {
+      throw new HttpException('Invalid device fingerprint', HttpStatus.BAD_REQUEST);
+    }
 
-    if (category) {
-      events = events.filter((e) => e.category === category);
+    const type = typeStr ? this.parseEventType(typeStr) : undefined;
+    let events = this.analyticsStore.getEventsForDevice(deviceFingerprint);
+
+    if (type !== undefined) {
+      events = events.filter((e) => e.type === type);
     }
 
     const limit = parseInt(limitStr || '100', 10);
     events = events.slice(0, limit);
 
     return {
-      deviceId,
+      deviceFingerprint,
       totalEvents: events.length,
       events: events.map((e) => ({
         eventId: e.eventId,
         batchId: e.batchId,
         timestamp: this.safeDate(e.timestampMs),
-        category: e.category,
+        type: this.analyticsService.getEventTypeString(e.type),
         payload: e.payload,
       })),
     };
@@ -189,9 +285,14 @@ export class AnalyticsHttpController {
   /**
    * Get analytics summary for a device
    */
-  @Get('devices/:deviceId/summary')
-  getDeviceSummary(@Param('deviceId') deviceId: string) {
-    const analytics = this.analyticsStore.getDeviceAnalytics(deviceId);
+  @Get('devices/:deviceFingerprint/summary')
+  getDeviceSummary(@Param('deviceFingerprint') deviceFingerprintStr: string) {
+    const deviceFingerprint = parseInt(deviceFingerprintStr, 10);
+    if (isNaN(deviceFingerprint)) {
+      throw new HttpException('Invalid device fingerprint', HttpStatus.BAD_REQUEST);
+    }
+
+    const analytics = this.analyticsStore.getDeviceAnalytics(deviceFingerprint);
 
     if (!analytics) {
       throw new HttpException(
@@ -201,24 +302,91 @@ export class AnalyticsHttpController {
     }
 
     return {
-      deviceId: analytics.deviceId,
+      deviceFingerprint: analytics.deviceFingerprint,
       lastSeen: this.safeDate(analytics.lastSeenAt),
       totalEvents: analytics.totalEvents,
-      playbackCount: analytics.playbackCount,
-      errorCount: analytics.errorCount,
-      lastHealthSnapshot: analytics.lastHealthSnapshot,
+      eventsByType: analytics.eventsByType,
+      lastNetworkQuality: analytics.lastNetworkQuality
+        ? this.analyticsService.getConnectionQualityString(analytics.lastNetworkQuality)
+        : undefined,
     };
   }
 
   /**
-   * Get queue status for a device
+   * List all devices with analytics data
    */
-  @Get('devices/:deviceId/queue')
-  getDeviceQueue(@Param('deviceId') deviceId: string) {
-    const status = this.analyticsStore.getQueueStatus(deviceId);
+  @Get('devices')
+  getDevicesWithAnalytics() {
+    const fingerprints = this.analyticsStore.getDeviceFingerprints();
+    const devices = fingerprints.map((fingerprint) => {
+      const analytics = this.analyticsStore.getDeviceAnalytics(fingerprint);
+      return {
+        deviceFingerprint: fingerprint,
+        lastSeen: analytics ? this.safeDate(analytics.lastSeenAt) : null,
+        totalEvents: analytics?.totalEvents || 0,
+        eventsByType: analytics?.eventsByType || {
+          ERROR: 0,
+          IMPRESSION: 0,
+          HEARTBEAT: 0,
+          PERFORMANCE: 0,
+          LIFECYCLE: 0,
+          UNKNOWN: 0,
+        },
+      };
+    });
+
     return {
-      deviceId,
-      ...status,
+      total: devices.length,
+      devices: devices.sort(
+        (a, b) =>
+          new Date(b.lastSeen || 0).getTime() - new Date(a.lastSeen || 0).getTime(),
+      ),
+    };
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // Global Analytics
+  // ─────────────────────────────────────────────────────────────
+
+  /**
+   * Get global analytics summary
+   */
+  @Get('summary')
+  getGlobalSummary() {
+    const deviceFingerprints = this.analyticsStore.getDeviceFingerprints();
+    const totalEvents = this.analyticsStore.getEventCount();
+
+    return {
+      totalDevices: deviceFingerprints.length,
+      totalEvents,
+      storageLimit: 50000,
+      storageUsagePercent: Math.round((totalEvents / 50000) * 100),
+    };
+  }
+
+  /**
+   * Get global event counts by type
+   */
+  @Get('stats')
+  getGlobalStats() {
+    const events = this.analyticsStore.getAllEvents();
+    const stats = {
+      ERROR: 0,
+      IMPRESSION: 0,
+      HEARTBEAT: 0,
+      PERFORMANCE: 0,
+      LIFECYCLE: 0,
+      UNKNOWN: 0,
+    };
+
+    for (const event of events) {
+      const typeStr = this.analyticsService.getEventTypeString(event.type);
+      stats[typeStr as keyof typeof stats]++;
+    }
+
+    return {
+      totalEvents: events.length,
+      byType: stats,
     };
   }
 
@@ -237,42 +405,51 @@ export class AnalyticsHttpController {
       throw new HttpException('Fleet not found', HttpStatus.NOT_FOUND);
     }
 
-    return analytics;
+    return {
+      fleetId: analytics.fleetId,
+      totalDevices: analytics.totalDevices,
+      totalEvents: analytics.totalEvents,
+      eventsByType: analytics.eventsByType,
+      recentEvents: analytics.recentEvents.map((e) => ({
+        eventId: e.eventId,
+        deviceFingerprint: e.deviceFingerprint,
+        timestamp: this.safeDate(e.timestampMs),
+        type: this.analyticsService.getEventTypeString(e.type),
+        payload: e.payload,
+      })),
+    };
   }
 
   /**
-   * Get playback statistics for a fleet
+   * Get impression summary for a fleet
    */
-  @Get('fleets/:fleetId/playback')
-  getFleetPlayback(@Param('fleetId') fleetId: string) {
-    const stats = this.fleetAnalytics.getFleetPlaybackStats(fleetId);
+  @Get('fleets/:fleetId/impressions')
+  getFleetImpressions(@Param('fleetId') fleetId: string) {
+    const summary = this.fleetAnalytics.getFleetImpressionSummary(fleetId);
 
-    if (!stats) {
+    if (!summary) {
       throw new HttpException('Fleet not found', HttpStatus.NOT_FOUND);
     }
 
-    return stats;
+    return summary;
   }
 
   /**
-   * Get error statistics for a fleet
+   * Get error events for a fleet
    */
   @Get('fleets/:fleetId/errors')
   getFleetErrors(@Param('fleetId') fleetId: string) {
-    const stats = this.fleetAnalytics.getFleetErrorStats(fleetId);
+    const errors = this.fleetAnalytics.getFleetErrorEvents(fleetId);
 
-    if (!stats) {
+    if (!errors) {
       throw new HttpException('Fleet not found', HttpStatus.NOT_FOUND);
     }
 
     return {
-      totalErrors: stats.totalErrors,
-      fatalErrors: stats.fatalErrors,
-      byComponent: stats.byComponent,
-      byType: stats.byType,
-      recentErrors: stats.recentErrors.map((e) => ({
+      totalErrors: errors.length,
+      errors: errors.slice(0, 50).map((e) => ({
         eventId: e.eventId,
-        deviceId: e.deviceId,
+        deviceFingerprint: e.deviceFingerprint,
         timestamp: this.safeDate(e.timestampMs),
         payload: e.payload,
       })),
@@ -290,109 +467,71 @@ export class AnalyticsHttpController {
       throw new HttpException('Fleet not found', HttpStatus.NOT_FOUND);
     }
 
-    return overview;
-  }
-
-  /**
-   * Get aggregated events for all devices in a fleet
-   */
-  @Get('fleets/:fleetId/events')
-  getFleetEvents(
-    @Param('fleetId') fleetId: string,
-    @Query('category') category?: 'PLAYBACK' | 'ERROR' | 'HEALTH',
-    @Query('limit') limitStr?: string,
-  ) {
-    const fleet = this.fleetService.getFleet(fleetId);
-    if (!fleet) {
-      throw new HttpException('Fleet not found', HttpStatus.NOT_FOUND);
-    }
-
-    const members = Array.from(fleet.members.keys());
-    const allEvents: Array<{
-      eventId: string;
-      deviceId: string;
-      timestamp: string;
-      category: string;
-      payload: any;
-    }> = [];
-
-    for (const deviceId of members) {
-      let deviceEvents = this.analyticsStore.getEventsForDevice(deviceId);
-
-      if (category) {
-        deviceEvents = deviceEvents.filter((e) => e.category === category);
-      }
-
-      for (const event of deviceEvents) {
-        allEvents.push({
-          eventId: event.eventId,
-          deviceId: event.deviceId,
-          timestamp: this.safeDate(event.timestampMs),
-          category: event.category,
-          payload: event.payload,
-        });
-      }
-    }
-
-    // Sort by timestamp descending
-    allEvents.sort(
-      (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
-    );
-
-    const limit = parseInt(limitStr || '100', 10);
-    const limitedEvents = allEvents.slice(0, limit);
-
     return {
-      fleetId,
-      totalDevices: members.length,
-      totalEvents: allEvents.length,
-      events: limitedEvents,
+      ...overview,
+      deviceHealth: overview.deviceHealth.map((d) => ({
+        ...d,
+        lastSeen: this.safeDate(d.lastSeen),
+      })),
     };
   }
 
   // ─────────────────────────────────────────────────────────────
-  // Global Analytics
+  // Helpers
   // ─────────────────────────────────────────────────────────────
 
   /**
-   * Get global analytics summary
+   * Parse event type string to enum
    */
-  @Get('summary')
-  getGlobalSummary() {
-    const deviceIds = this.analyticsStore.getDeviceIds();
-    const totalEvents = this.analyticsStore.getEventCount();
-
-    return {
-      totalDevices: deviceIds.length,
-      totalEvents,
-      storageLimit: 50000,
-      storageUsagePercent: Math.round((totalEvents / 50000) * 100),
+  private parseEventType(type: string): EventType {
+    const map: Record<string, EventType> = {
+      UNSPECIFIED: EventType.EVENT_TYPE_UNSPECIFIED,
+      ERROR: EventType.ERROR,
+      IMPRESSION: EventType.IMPRESSION,
+      HEARTBEAT: EventType.HEARTBEAT,
+      PERFORMANCE: EventType.PERFORMANCE,
+      LIFECYCLE: EventType.LIFECYCLE,
     };
+    return map[type?.toUpperCase()] ?? EventType.EVENT_TYPE_UNSPECIFIED;
   }
 
   /**
-   * List all devices with analytics data
+   * Parse connection quality string to enum
    */
-  @Get('devices')
-  getDevicesWithAnalytics() {
-    const deviceIds = this.analyticsStore.getDeviceIds();
-    const devices = deviceIds.map((id) => {
-      const analytics = this.analyticsStore.getDeviceAnalytics(id);
-      return {
-        deviceId: id,
-        lastSeen: analytics ? this.safeDate(analytics.lastSeenAt) : null,
-        totalEvents: analytics?.totalEvents || 0,
-        playbackCount: analytics?.playbackCount || 0,
-        errorCount: analytics?.errorCount || 0,
-      };
-    });
-
-    return {
-      total: devices.length,
-      devices: devices.sort(
-        (a, b) =>
-          new Date(b.lastSeen || 0).getTime() - new Date(a.lastSeen || 0).getTime(),
-      ),
+  private parseConnectionQuality(quality: string): ConnectionQuality {
+    const map: Record<string, ConnectionQuality> = {
+      UNSPECIFIED: ConnectionQuality.CONNECTION_QUALITY_UNSPECIFIED,
+      OFFLINE: ConnectionQuality.OFFLINE,
+      POOR: ConnectionQuality.POOR,
+      FAIR: ConnectionQuality.FAIR,
+      GOOD: ConnectionQuality.GOOD,
+      EXCELLENT: ConnectionQuality.EXCELLENT,
     };
+    return map[quality?.toUpperCase()] ?? ConnectionQuality.CONNECTION_QUALITY_UNSPECIFIED;
+  }
+
+  /**
+   * Generate a UUID as hex string
+   */
+  private generateUuid(): string {
+    const bytes = new Uint8Array(16);
+    for (let i = 0; i < 16; i++) {
+      bytes[i] = Math.floor(Math.random() * 256);
+    }
+    // Set version (4) and variant bits
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    return Buffer.from(bytes).toString('hex');
+  }
+
+  /**
+   * Format schema version from integer to string
+   * 0x00MMmmPP -> major.minor.patch
+   */
+  private formatSchemaVersion(version: number): string {
+    const major = (version >> 16) & 0xff;
+    const minor = (version >> 8) & 0xff;
+    const patch = version & 0xff;
+    return `${major}.${minor}.${patch}`;
   }
 }
