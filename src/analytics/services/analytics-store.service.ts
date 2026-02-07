@@ -1,6 +1,10 @@
-import { Injectable, Logger } from '@nestjs/common';
-import type { StoredAnalyticsEvent, DeviceAnalytics, EventTypeString } from '../interfaces/analytics.types';
-import { EventType } from '../../generated/analytics/v1/analytics';
+import { Injectable, Logger } from "@nestjs/common";
+import type {
+  StoredAnalyticsEvent,
+  DeviceAnalytics,
+  EventTypeString,
+} from "../interfaces/analytics.types";
+import { EventType } from "../../generated/analytics/v1/analytics";
 
 @Injectable()
 export class AnalyticsStoreService {
@@ -25,7 +29,13 @@ export class AnalyticsStoreService {
       type: number;
       schemaVersion: number;
       payload: unknown;
-      network?: { quality: number; downloadMbps?: number; uploadMbps?: number; connectionType?: string; signalStrengthDbm?: number };
+      network?: {
+        quality: number;
+        downloadMbps?: number;
+        uploadMbps?: number;
+        connectionType?: string;
+        signalStrengthDbm?: number;
+      };
     }>,
   ): string[] {
     const now = Date.now();
@@ -59,9 +69,7 @@ export class AnalyticsStoreService {
       this.deviceEvents.get(event.deviceFingerprint)!.add(event.eventId);
     }
 
-    this.logger.log(
-      `Stored ${events.length} events from batch ${batchId}`,
-    );
+    this.logger.log(`Stored ${events.length} events from batch ${batchId}`);
     return storedIds;
   }
 
@@ -95,7 +103,9 @@ export class AnalyticsStoreService {
     let events = Array.from(this.events.values());
 
     if (options?.deviceFingerprint !== undefined) {
-      events = events.filter((e) => e.deviceFingerprint === options.deviceFingerprint);
+      events = events.filter(
+        (e) => e.deviceFingerprint === options.deviceFingerprint,
+      );
     }
 
     if (options?.type !== undefined) {
@@ -173,7 +183,7 @@ export class AnalyticsStoreService {
   clear(): void {
     this.events.clear();
     this.deviceEvents.clear();
-    this.logger.log('Analytics store cleared');
+    this.logger.log("Analytics store cleared");
   }
 
   /**
@@ -182,17 +192,17 @@ export class AnalyticsStoreService {
   private getEventTypeString(type: EventType): EventTypeString {
     switch (type) {
       case EventType.ERROR:
-        return 'ERROR';
+        return "ERROR";
       case EventType.IMPRESSION:
-        return 'IMPRESSION';
+        return "IMPRESSION";
       case EventType.HEARTBEAT:
-        return 'HEARTBEAT';
+        return "HEARTBEAT";
       case EventType.PERFORMANCE:
-        return 'PERFORMANCE';
+        return "PERFORMANCE";
       case EventType.LIFECYCLE:
-        return 'LIFECYCLE';
+        return "LIFECYCLE";
       default:
-        return 'UNKNOWN';
+        return "UNKNOWN";
     }
   }
 

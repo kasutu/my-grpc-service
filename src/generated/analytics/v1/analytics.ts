@@ -64,9 +64,7 @@ export interface Batch {
   /** 4-byte hash vs string */
   deviceFingerprint: number;
   /** Backpressure signal */
-  queue?:
-    | QueueStatus
-    | undefined;
+  queue?: QueueStatus | undefined;
   /** Batch creation time */
   sentAtMs: number;
 }
@@ -141,13 +139,27 @@ export function AnalyticsServiceControllerMethods() {
   return function (constructor: Function) {
     const grpcMethods: string[] = ["ingest"];
     for (const method of grpcMethods) {
-      const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
-      GrpcMethod("AnalyticsService", method)(constructor.prototype[method], method, descriptor);
+      const descriptor: any = Reflect.getOwnPropertyDescriptor(
+        constructor.prototype,
+        method,
+      );
+      GrpcMethod("AnalyticsService", method)(
+        constructor.prototype[method],
+        method,
+        descriptor,
+      );
     }
     const grpcStreamMethods: string[] = ["stream"];
     for (const method of grpcStreamMethods) {
-      const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
-      GrpcStreamMethod("AnalyticsService", method)(constructor.prototype[method], method, descriptor);
+      const descriptor: any = Reflect.getOwnPropertyDescriptor(
+        constructor.prototype,
+        method,
+      );
+      GrpcStreamMethod("AnalyticsService", method)(
+        constructor.prototype[method],
+        method,
+        descriptor,
+      );
     }
   };
 }

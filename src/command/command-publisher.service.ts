@@ -1,7 +1,7 @@
-import { Injectable, OnModuleDestroy } from '@nestjs/common';
-import { Subject, firstValueFrom, race, timer } from 'rxjs';
-import { map, take } from 'rxjs/operators';
-import type { CommandPackage } from 'src/generated/command/v1/command';
+import { Injectable, OnModuleDestroy } from "@nestjs/common";
+import { Subject, firstValueFrom, race, timer } from "rxjs";
+import { map, take } from "rxjs/operators";
+import type { CommandPackage } from "src/generated/command/v1/command";
 
 export interface AckResult {
   success: boolean;
@@ -60,7 +60,7 @@ export class CommandPublisherService implements OnModuleDestroy {
     console.log(`👋 Device ${deviceId} unsubscribed from commands`);
     this.subscriptions.delete(deviceId);
     this.deviceInfo.delete(deviceId);
-    
+
     // Reject all pending ACKs for this device
     const devicePending = this.pendingAcks.get(deviceId);
     if (devicePending) {
@@ -69,7 +69,7 @@ export class CommandPublisherService implements OnModuleDestroy {
           success: false,
           commandId: pending.commandId,
           deviceId,
-          errorMessage: 'Device disconnected',
+          errorMessage: "Device disconnected",
           timedOut: false,
         });
       }
@@ -84,7 +84,7 @@ export class CommandPublisherService implements OnModuleDestroy {
     errorMsg?: string,
   ) {
     console.log(
-      `✅ Command ack from ${deviceId} for ${commandId}: ${success ? 'success' : 'failed'}`,
+      `✅ Command ack from ${deviceId} for ${commandId}: ${success ? "success" : "failed"}`,
     );
     if (!success && errorMsg) {
       console.error(`   Error: ${errorMsg}`);
@@ -131,7 +131,7 @@ export class CommandPublisherService implements OnModuleDestroy {
         success: false,
         commandId: commandPackage.commandId,
         deviceId,
-        errorMessage: 'Device not connected',
+        errorMessage: "Device not connected",
         timedOut: false,
       };
     }
@@ -243,7 +243,7 @@ export class CommandPublisherService implements OnModuleDestroy {
           success: false,
           commandId: pending.commandId,
           deviceId,
-          errorMessage: 'Service shutting down',
+          errorMessage: "Service shutting down",
           timedOut: false,
         });
       }

@@ -1,8 +1,8 @@
-import { Controller } from '@nestjs/common';
-import { GrpcMethod, GrpcStreamMethod } from '@nestjs/microservices';
-import { Observable, Subject } from 'rxjs';
-import { AnalyticsService } from './analytics.service';
-import type { Batch, Ack, Event } from '../generated/analytics/v1/analytics';
+import { Controller } from "@nestjs/common";
+import { GrpcMethod, GrpcStreamMethod } from "@nestjs/microservices";
+import { Observable, Subject } from "rxjs";
+import { AnalyticsService } from "./analytics.service";
+import type { Batch, Ack, Event } from "../generated/analytics/v1/analytics";
 
 @Controller()
 export class AnalyticsController {
@@ -11,7 +11,7 @@ export class AnalyticsController {
   /**
    * Fire-and-forget batch upload (primary method)
    */
-  @GrpcMethod('AnalyticsService', 'Ingest')
+  @GrpcMethod("AnalyticsService", "Ingest")
   ingest(batch: Batch): Ack {
     return this.analyticsService.ingest(batch);
   }
@@ -19,7 +19,7 @@ export class AnalyticsController {
   /**
    * Optional: long-lived stream for real-time
    */
-  @GrpcStreamMethod('AnalyticsService', 'Stream')
+  @GrpcStreamMethod("AnalyticsService", "Stream")
   stream(events$: Observable<Event>): Observable<Ack> {
     const acks$ = new Subject<Ack>();
 
@@ -37,7 +37,7 @@ export class AnalyticsController {
         acks$.next(ack);
       },
       error: (err) => {
-        console.error('Stream error:', err);
+        console.error("Stream error:", err);
         acks$.complete();
       },
       complete: () => {

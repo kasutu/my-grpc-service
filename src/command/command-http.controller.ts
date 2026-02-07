@@ -8,16 +8,19 @@ import {
   HttpStatus,
   Res,
   Query,
-} from '@nestjs/common';
-import type { Response } from 'express';
-import { CommandPublisherService, AckResult } from './command-publisher.service';
-import { CommandMapper } from 'src/command/interfaces/command.mapper';
+} from "@nestjs/common";
+import type { Response } from "express";
+import {
+  CommandPublisherService,
+  AckResult,
+} from "./command-publisher.service";
+import { CommandMapper } from "src/command/interfaces/command.mapper";
 
-@Controller('commands')
+@Controller("commands")
 export class CommandHttpController {
   constructor(private readonly publisher: CommandPublisherService) {}
 
-  @Get('devices')
+  @Get("devices")
   getConnectedDevices() {
     const devices = this.publisher.getConnectedDevices();
     return {
@@ -33,12 +36,12 @@ export class CommandHttpController {
     };
   }
 
-  @Post('clock/:deviceId')
+  @Post("clock/:deviceId")
   @HttpCode(HttpStatus.OK)
   async setClock(
-    @Param('deviceId') deviceId: string,
+    @Param("deviceId") deviceId: string,
     @Body() body: any,
-    @Query('timeout') timeoutMs: string = '5000',
+    @Query("timeout") timeoutMs: string = "5000",
     @Res({ passthrough: true }) res: Response,
   ) {
     const command = CommandMapper.toCommandPackage({
@@ -46,7 +49,7 @@ export class CommandHttpController {
       requires_ack: true,
       issued_at: new Date().toISOString(),
       set_clock: {
-        simulated_time: body.simulated_time ?? '',
+        simulated_time: body.simulated_time ?? "",
       },
     });
 
@@ -56,12 +59,12 @@ export class CommandHttpController {
     return this.formatResponse(result, res);
   }
 
-  @Post('reboot/:deviceId')
+  @Post("reboot/:deviceId")
   @HttpCode(HttpStatus.OK)
   async rebootDevice(
-    @Param('deviceId') deviceId: string,
+    @Param("deviceId") deviceId: string,
     @Body() body: any,
-    @Query('timeout') timeoutMs: string = '5000',
+    @Query("timeout") timeoutMs: string = "5000",
     @Res({ passthrough: true }) res: Response,
   ) {
     const command = CommandMapper.toCommandPackage({
@@ -79,12 +82,12 @@ export class CommandHttpController {
     return this.formatResponse(result, res);
   }
 
-  @Post('network/:deviceId')
+  @Post("network/:deviceId")
   @HttpCode(HttpStatus.OK)
   async updateNetwork(
-    @Param('deviceId') deviceId: string,
+    @Param("deviceId") deviceId: string,
     @Body() body: any,
-    @Query('timeout') timeoutMs: string = '5000',
+    @Query("timeout") timeoutMs: string = "5000",
     @Res({ passthrough: true }) res: Response,
   ) {
     const command = CommandMapper.toCommandPackage({
@@ -92,8 +95,8 @@ export class CommandHttpController {
       requires_ack: true,
       issued_at: new Date().toISOString(),
       update_network: {
-        new_ssid: body.new_ssid ?? '',
-        new_password: body.new_password ?? '',
+        new_ssid: body.new_ssid ?? "",
+        new_password: body.new_password ?? "",
       },
     });
 
@@ -103,12 +106,12 @@ export class CommandHttpController {
     return this.formatResponse(result, res);
   }
 
-  @Post('rotate/:deviceId')
+  @Post("rotate/:deviceId")
   @HttpCode(HttpStatus.OK)
   async rotateScreen(
-    @Param('deviceId') deviceId: string,
+    @Param("deviceId") deviceId: string,
     @Body() body: any,
-    @Query('timeout') timeoutMs: string = '5000',
+    @Query("timeout") timeoutMs: string = "5000",
     @Res({ passthrough: true }) res: Response,
   ) {
     const command = CommandMapper.toCommandPackage({
@@ -116,7 +119,7 @@ export class CommandHttpController {
       requires_ack: true,
       issued_at: new Date().toISOString(),
       rotate_screen: {
-        orientation: body.orientation ?? 'auto',
+        orientation: body.orientation ?? "auto",
         fullscreen: body.fullscreen ?? null,
       },
     });
@@ -127,18 +130,18 @@ export class CommandHttpController {
     return this.formatResponse(result, res);
   }
 
-  @Post('broadcast/clock')
+  @Post("broadcast/clock")
   @HttpCode(HttpStatus.OK)
   async broadcastClock(
     @Body() body: any,
-    @Query('timeout') timeoutMs: string = '5000',
+    @Query("timeout") timeoutMs: string = "5000",
   ) {
     const command = CommandMapper.toCommandPackage({
       command_id: `clock-broadcast-${Date.now()}`,
       requires_ack: true,
       issued_at: new Date().toISOString(),
       set_clock: {
-        simulated_time: body.simulated_time ?? '',
+        simulated_time: body.simulated_time ?? "",
       },
     });
 
@@ -148,18 +151,18 @@ export class CommandHttpController {
     return this.formatBroadcastResponse(results);
   }
 
-  @Post('broadcast/rotate')
+  @Post("broadcast/rotate")
   @HttpCode(HttpStatus.OK)
   async broadcastRotate(
     @Body() body: any,
-    @Query('timeout') timeoutMs: string = '5000',
+    @Query("timeout") timeoutMs: string = "5000",
   ) {
     const command = CommandMapper.toCommandPackage({
       command_id: `rotate-broadcast-${Date.now()}`,
       requires_ack: true,
       issued_at: new Date().toISOString(),
       rotate_screen: {
-        orientation: body.orientation ?? 'auto',
+        orientation: body.orientation ?? "auto",
         fullscreen: body.fullscreen ?? null,
       },
     });
@@ -170,7 +173,7 @@ export class CommandHttpController {
     return this.formatBroadcastResponse(results);
   }
 
-  @Get('stats')
+  @Get("stats")
   getStats() {
     return {
       connected_devices: this.publisher.getConnectedCount(),
@@ -179,7 +182,7 @@ export class CommandHttpController {
 
   private formatResponse(result: AckResult, res: Response) {
     if (!result.success) {
-      if (result.errorMessage?.includes('not connected')) {
+      if (result.errorMessage?.includes("not connected")) {
         res.status(HttpStatus.SERVICE_UNAVAILABLE);
       } else if (result.timedOut) {
         res.status(HttpStatus.REQUEST_TIMEOUT);
@@ -193,7 +196,7 @@ export class CommandHttpController {
       command_id: result.commandId,
       device_id: result.deviceId,
       message: result.success
-        ? 'Command executed successfully'
+        ? "Command executed successfully"
         : result.errorMessage,
       timed_out: result.timedOut ?? false,
     };

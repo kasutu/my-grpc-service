@@ -1,24 +1,33 @@
 // Analytics v2 Types - Minimal envelope + CBOR payload
 
-import type { EventType, ConnectionQuality } from '../../generated/analytics/v1/analytics';
+import type {
+  EventType,
+  ConnectionQuality,
+} from "../../generated/analytics/v1/analytics";
 
 export type { EventType, ConnectionQuality };
 
 /** Stored analytics event after decoding CBOR payload */
 export interface StoredAnalyticsEvent {
-  eventId: string;          // Hex string of 16-byte UUID
+  eventId: string; // Hex string of 16-byte UUID
   deviceFingerprint: number; // 4-byte device hash
-  batchId: string;          // Hex string of 16-byte UUID
+  batchId: string; // Hex string of 16-byte UUID
   timestampMs: number;
   type: EventType;
-  schemaVersion: number;    // 0x00MMmmPP format
-  payload: unknown;         // Decoded CBOR payload
+  schemaVersion: number; // 0x00MMmmPP format
+  payload: unknown; // Decoded CBOR payload
   network?: NetworkContext;
   receivedAt: number;
 }
 
 /** Event type as string for display */
-export type EventTypeString = 'ERROR' | 'IMPRESSION' | 'HEARTBEAT' | 'PERFORMANCE' | 'LIFECYCLE' | 'UNKNOWN';
+export type EventTypeString =
+  | "ERROR"
+  | "IMPRESSION"
+  | "HEARTBEAT"
+  | "PERFORMANCE"
+  | "LIFECYCLE"
+  | "UNKNOWN";
 
 /** Network context at event time */
 export interface NetworkContext {
@@ -64,37 +73,37 @@ export interface QueueStatus {
 
 /** CBOR payload schema versions */
 export interface ImpressionPayloadV1 {
-  c: string;      // campaignId
-  p: number;      // playCount
-  t: number;      // lastPlayedAt timestamp ms
-  d: number;      // totalPlayTime ms
-  m?: string;     // lastMediaId (optional)
-  v: number;      // schema version
+  c: string; // campaignId
+  p: number; // playCount
+  t: number; // lastPlayedAt timestamp ms
+  d: number; // totalPlayTime ms
+  m?: string; // lastMediaId (optional)
+  v: number; // schema version
 }
 
 export interface ErrorPayloadV1 {
-  code: string;       // error code
-  msg: string;        // message
+  code: string; // error code
+  msg: string; // message
   component?: string; // source component
-  fatal?: boolean;    // is fatal
-  v: number;          // schema version
+  fatal?: boolean; // is fatal
+  v: number; // schema version
 }
 
 export interface HeartbeatPayloadV1 {
-  uptime: number;     // device uptime ms
-  battery?: number;   // battery level 0-100
-  v: number;          // schema version
+  uptime: number; // device uptime ms
+  battery?: number; // battery level 0-100
+  v: number; // schema version
 }
 
 export interface PerformancePayloadV1 {
-  cpu: number;        // CPU usage 0-100
-  memory: number;     // Memory usage 0-100
-  fps?: number;       // frame rate
-  v: number;          // schema version
+  cpu: number; // CPU usage 0-100
+  memory: number; // Memory usage 0-100
+  fps?: number; // frame rate
+  v: number; // schema version
 }
 
 export interface LifecyclePayloadV1 {
-  action: string;     // e.g., "app_start", "app_resume"
+  action: string; // e.g., "app_start", "app_resume"
   prevState?: string; // previous state
-  v: number;          // schema version
+  v: number; // schema version
 }

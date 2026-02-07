@@ -1,6 +1,6 @@
-import { Injectable, OnModuleDestroy } from '@nestjs/common';
-import { Subject } from 'rxjs';
-import type { ContentPackage } from 'src/generated/content/v1/content';
+import { Injectable, OnModuleDestroy } from "@nestjs/common";
+import { Subject } from "rxjs";
+import type { ContentPackage } from "src/generated/content/v1/content";
 
 export interface AckResult {
   success: boolean;
@@ -62,7 +62,7 @@ export class ContentPublisherService implements OnModuleDestroy {
           success: false,
           deliveryId: pending.deliveryId,
           deviceId,
-          errorMessage: 'Device disconnected',
+          errorMessage: "Device disconnected",
           timedOut: false,
         });
       }
@@ -80,7 +80,7 @@ export class ContentPublisherService implements OnModuleDestroy {
     errorMsg?: string,
   ) {
     console.log(
-      `✅ Ack from ${deviceId} for ${deliveryId}: ${success ? 'success' : 'failed'}`,
+      `✅ Ack from ${deviceId} for ${deliveryId}: ${success ? "success" : "failed"}`,
     );
 
     if (!success && errorMsg) {
@@ -122,7 +122,7 @@ export class ContentPublisherService implements OnModuleDestroy {
         success: false,
         deliveryId: contentPackage.deliveryId,
         deviceId,
-        errorMessage: 'Device not connected',
+        errorMessage: "Device not connected",
         timedOut: false,
       };
     }
@@ -196,7 +196,11 @@ export class ContentPublisherService implements OnModuleDestroy {
 
     for (const [deviceId, stream$] of this.subscriptions) {
       if (!stream$.closed) {
-        const promise = this.publishToDevice(deviceId, contentPackage, timeoutMs);
+        const promise = this.publishToDevice(
+          deviceId,
+          contentPackage,
+          timeoutMs,
+        );
         promises.push(promise);
       }
     }
@@ -216,7 +220,7 @@ export class ContentPublisherService implements OnModuleDestroy {
           success: false,
           deliveryId: pending.deliveryId,
           deviceId,
-          errorMessage: 'Service shutting down',
+          errorMessage: "Service shutting down",
           timedOut: false,
         });
       }

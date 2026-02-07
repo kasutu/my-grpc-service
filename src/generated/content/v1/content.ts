@@ -82,20 +82,36 @@ export interface ContentServiceController {
 
   /** Unary call for acknowledgments (simpler than bidirectional) */
 
-  acknowledge(request: AckRequest): Promise<AckResponse> | Observable<AckResponse> | AckResponse;
+  acknowledge(
+    request: AckRequest,
+  ): Promise<AckResponse> | Observable<AckResponse> | AckResponse;
 }
 
 export function ContentServiceControllerMethods() {
   return function (constructor: Function) {
     const grpcMethods: string[] = ["subscribe", "acknowledge"];
     for (const method of grpcMethods) {
-      const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
-      GrpcMethod("ContentService", method)(constructor.prototype[method], method, descriptor);
+      const descriptor: any = Reflect.getOwnPropertyDescriptor(
+        constructor.prototype,
+        method,
+      );
+      GrpcMethod("ContentService", method)(
+        constructor.prototype[method],
+        method,
+        descriptor,
+      );
     }
     const grpcStreamMethods: string[] = [];
     for (const method of grpcStreamMethods) {
-      const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
-      GrpcStreamMethod("ContentService", method)(constructor.prototype[method], method, descriptor);
+      const descriptor: any = Reflect.getOwnPropertyDescriptor(
+        constructor.prototype,
+        method,
+      );
+      GrpcStreamMethod("ContentService", method)(
+        constructor.prototype[method],
+        method,
+        descriptor,
+      );
     }
   };
 }

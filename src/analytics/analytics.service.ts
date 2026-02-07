@@ -1,8 +1,13 @@
-import { Injectable, Logger } from '@nestjs/common';
-import * as cbor from 'cbor';
-import { AnalyticsStoreService } from './services/analytics-store.service';
-import type { Batch, Ack, Event, Policy } from '../generated/analytics/v1/analytics';
-import { ConnectionQuality } from '../generated/analytics/v1/analytics';
+import { Injectable, Logger } from "@nestjs/common";
+import * as cbor from "cbor";
+import { AnalyticsStoreService } from "./services/analytics-store.service";
+import type {
+  Batch,
+  Ack,
+  Event,
+  Policy,
+} from "../generated/analytics/v1/analytics";
+import { ConnectionQuality } from "../generated/analytics/v1/analytics";
 
 @Injectable()
 export class AnalyticsService {
@@ -31,17 +36,26 @@ export class AnalyticsService {
   private processBatch(batch: Batch): Ack {
     // Validate batch
     if (!batch) {
-      return this.createAck(Buffer.alloc(0), false, [], 'Missing batch');
+      return this.createAck(Buffer.alloc(0), false, [], "Missing batch");
     }
 
     // Validate batchId (should be 16 bytes)
     if (!batch.batchId || batch.batchId.length === 0) {
-      return this.createAck(Buffer.alloc(0), false, [], 'Missing batch_id');
+      return this.createAck(Buffer.alloc(0), false, [], "Missing batch_id");
     }
 
     // Validate events
-    if (!batch.events || !Array.isArray(batch.events) || batch.events.length === 0) {
-      return this.createAck(batch.batchId, false, [], 'Empty batch (no events)');
+    if (
+      !batch.events ||
+      !Array.isArray(batch.events) ||
+      batch.events.length === 0
+    ) {
+      return this.createAck(
+        batch.batchId,
+        false,
+        [],
+        "Empty batch (no events)",
+      );
     }
 
     // Validate batch size
@@ -69,7 +83,13 @@ export class AnalyticsService {
       type: number;
       schemaVersion: number;
       payload: unknown;
-      network?: { quality: number; downloadMbps?: number; uploadMbps?: number; connectionType?: string; signalStrengthDbm?: number };
+      network?: {
+        quality: number;
+        downloadMbps?: number;
+        uploadMbps?: number;
+        connectionType?: string;
+        signalStrengthDbm?: number;
+      };
     }> = [];
 
     for (const event of batch.events) {
@@ -98,7 +118,9 @@ export class AnalyticsService {
     const accepted = rejectedEventIds.length === 0;
 
     if (accepted) {
-      this.logger.log(`Batch ${batchIdHex} accepted (${eventsToStore.length} events)`);
+      this.logger.log(
+        `Batch ${batchIdHex} accepted (${eventsToStore.length} events)`,
+      );
     } else {
       this.logger.warn(
         `Batch ${batchIdHex} partially accepted (${eventsToStore.length}/${batch.events.length} events)`,
@@ -109,7 +131,7 @@ export class AnalyticsService {
       batch.batchId,
       accepted,
       rejectedEventIds,
-      accepted ? undefined : 'Some events failed to process',
+      accepted ? undefined : "Some events failed to process",
     );
   }
 
@@ -122,17 +144,25 @@ export class AnalyticsService {
     type: number;
     schemaVersion: number;
     payload: unknown;
-    network?: { quality: number; downloadMbps?: number; uploadMbps?: number; connectionType?: string; signalStrengthDbm?: number };
+    network?: {
+      quality: number;
+      downloadMbps?: number;
+      uploadMbps?: number;
+      connectionType?: string;
+      signalStrengthDbm?: number;
+    };
   } | null {
     // Validate eventId (should be 16 bytes)
     if (!event.eventId || event.eventId.length !== 16) {
-      this.logger.warn('Event missing valid event_id, skipping');
+      this.logger.warn("Event missing valid event_id, skipping");
       return null;
     }
 
     // Validate payload exists
     if (!event.payload || event.payload.length === 0) {
-      this.logger.warn(`Event ${this.bytesToHex(event.eventId)} has no payload, skipping`);
+      this.logger.warn(
+        `Event ${this.bytesToHex(event.eventId)} has no payload, skipping`,
+      );
       return null;
     }
 
@@ -141,7 +171,9 @@ export class AnalyticsService {
     try {
       decodedPayload = cbor.decode(event.payload);
     } catch (error) {
-      this.logger.warn(`Failed to decode CBOR payload for event ${this.bytesToHex(event.eventId)}: ${error}`);
+      this.logger.warn(
+        `Failed to decode CBOR payload for event ${this.bytesToHex(event.eventId)}: ${error}`,
+      );
       return null;
     }
 
@@ -197,7 +229,7 @@ export class AnalyticsService {
    * Convert bytes to hex string
    */
   private bytesToHex(bytes: Uint8Array): string {
-    return Buffer.from(bytes).toString('hex');
+    return Buffer.from(bytes).toString("hex");
   }
 
   /**
@@ -205,14 +237,14 @@ export class AnalyticsService {
    */
   getEventTypeString(type: number): string {
     const map: Record<number, string> = {
-      0: 'UNSPECIFIED',
-      1: 'ERROR',
-      2: 'IMPRESSION',
-      3: 'HEARTBEAT',
-      4: 'PERFORMANCE',
-      5: 'LIFECYCLE',
+      0: "UNSPECIFIED",
+      1: "ERROR",
+      2: "IMPRESSION",
+      3: "HEARTBEAT",
+      4: "PERFORMANCE",
+      5: "LIFECYCLE",
     };
-    return map[type] || 'UNKNOWN';
+    return map[type] || "UNKNOWN";
   }
 
   /**
@@ -220,13 +252,13 @@ export class AnalyticsService {
    */
   getConnectionQualityString(quality: number): string {
     const map: Record<number, string> = {
-      0: 'UNSPECIFIED',
-      1: 'OFFLINE',
-      2: 'POOR',
-      3: 'FAIR',
-      4: 'GOOD',
-      5: 'EXCELLENT',
+      0: "UNSPECIFIED",
+      1: "OFFLINE",
+      2: "POOR",
+      3: "FAIR",
+      4: "GOOD",
+      5: "EXCELLENT",
     };
-    return map[quality] || 'UNKNOWN';
+    return map[quality] || "UNKNOWN";
   }
 }

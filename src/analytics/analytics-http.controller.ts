@@ -11,8 +11,6 @@ import {
 } from '@nestjs/common';
 import * as cbor from 'cbor';
 import { AnalyticsStoreService } from './services/analytics-store.service';
-import { FleetAnalyticsService } from './services/fleet-analytics.service';
-import { FleetService } from '../fleet/fleet.service';
 import { AnalyticsService } from './analytics.service';
 import type { Batch, Event } from '../generated/analytics/v1/analytics';
 import { EventType, ConnectionQuality } from '../generated/analytics/v1/analytics';
@@ -33,8 +31,6 @@ export class AnalyticsHttpController {
   constructor(
     private readonly analyticsService: AnalyticsService,
     private readonly analyticsStore: AnalyticsStoreService,
-    private readonly fleetAnalytics: FleetAnalyticsService,
-    private readonly fleetService: FleetService,
   ) {}
 
   // ─────────────────────────────────────────────────────────────
@@ -52,13 +48,13 @@ export class AnalyticsHttpController {
     @Body()
     body: {
       events: Array<{
-        event_id: string;      // hex string of 16-byte UUID
+        event_id: string; // hex string of 16-byte UUID
         timestamp_ms: number;
-        type: string;          // 'ERROR' | 'IMPRESSION' | 'HEARTBEAT' | 'PERFORMANCE' | 'LIFECYCLE'
+        type: string; // 'ERROR' | 'IMPRESSION' | 'HEARTBEAT' | 'PERFORMANCE' | 'LIFECYCLE'
         schema_version?: number;
-        payload: unknown;      // Will be CBOR encoded
+        payload: unknown; // Will be CBOR encoded
         network?: {
-          quality: string;     // 'OFFLINE' | 'POOR' | 'FAIR' | 'GOOD' | 'EXCELLENT'
+          quality: string; // 'OFFLINE' | 'POOR' | 'FAIR' | 'GOOD' | 'EXCELLENT'
           download_mbps?: number;
           upload_mbps?: number;
           connection_type?: string;
@@ -297,10 +293,7 @@ export class AnalyticsHttpController {
     const analytics = this.analyticsStore.getDeviceAnalytics(deviceFingerprint);
 
     if (!analytics) {
-      throw new HttpException(
-        'No analytics data found for device',
-        HttpStatus.NOT_FOUND,
-      );
+      throw new HttpException('No analytics data found for device', HttpStatus.NOT_FOUND);
     }
 
     return {
@@ -340,8 +333,7 @@ export class AnalyticsHttpController {
     return {
       total: devices.length,
       devices: devices.sort(
-        (a, b) =>
-          new Date(b.lastSeen || 0).getTime() - new Date(a.lastSeen || 0).getTime(),
+        (a, b) => new Date(b.lastSeen || 0).getTime() - new Date(a.lastSeen || 0).getTime(),
       ),
     };
   }
@@ -389,92 +381,6 @@ export class AnalyticsHttpController {
     return {
       totalEvents: events.length,
       byType: stats,
-    };
-  }
-
-  // ─────────────────────────────────────────────────────────────
-  // Fleet Analytics
-  // ─────────────────────────────────────────────────────────────
-
-  /**
-   * Get full analytics for a fleet
-   */
-  @Get('fleets/:fleetId')
-  getFleetAnalytics(@Param('fleetId') fleetId: string) {
-    const analytics = this.fleetAnalytics.getFleetAnalytics(fleetId);
-
-    if (!analytics) {
-      throw new HttpException('Fleet not found', HttpStatus.NOT_FOUND);
-    }
-
-    return {
-      fleetId: analytics.fleetId,
-      totalDevices: analytics.totalDevices,
-      totalEvents: analytics.totalEvents,
-      eventsByType: analytics.eventsByType,
-      recentEvents: analytics.recentEvents.map((e) => ({
-        eventId: e.eventId,
-        deviceFingerprint: e.deviceFingerprint,
-        timestamp: this.safeDate(e.timestampMs),
-        type: this.analyticsService.getEventTypeString(e.type),
-        payload: e.payload,
-      })),
-    };
-  }
-
-  /**
-   * Get impression summary for a fleet
-   */
-  @Get('fleets/:fleetId/impressions')
-  getFleetImpressions(@Param('fleetId') fleetId: string) {
-    const summary = this.fleetAnalytics.getFleetImpressionSummary(fleetId);
-
-    if (!summary) {
-      throw new HttpException('Fleet not found', HttpStatus.NOT_FOUND);
-    }
-
-    return summary;
-  }
-
-  /**
-   * Get error events for a fleet
-   */
-  @Get('fleets/:fleetId/errors')
-  getFleetErrors(@Param('fleetId') fleetId: string) {
-    const errors = this.fleetAnalytics.getFleetErrorEvents(fleetId);
-
-    if (!errors) {
-      throw new HttpException('Fleet not found', HttpStatus.NOT_FOUND);
-    }
-
-    return {
-      totalErrors: errors.length,
-      errors: errors.slice(0, 50).map((e) => ({
-        eventId: e.eventId,
-        deviceFingerprint: e.deviceFingerprint,
-        timestamp: this.safeDate(e.timestampMs),
-        payload: e.payload,
-      })),
-    };
-  }
-
-  /**
-   * Get health overview for a fleet
-   */
-  @Get('fleets/:fleetId/health')
-  getFleetHealth(@Param('fleetId') fleetId: string) {
-    const overview = this.fleetAnalytics.getFleetHealthOverview(fleetId);
-
-    if (!overview) {
-      throw new HttpException('Fleet not found', HttpStatus.NOT_FOUND);
-    }
-
-    return {
-      ...overview,
-      deviceHealth: overview.deviceHealth.map((d) => ({
-        ...d,
-        lastSeen: this.safeDate(d.lastSeen),
-      })),
     };
   }
 

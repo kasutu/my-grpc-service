@@ -1,19 +1,19 @@
-import { Controller } from '@nestjs/common';
-import { GrpcMethod } from '@nestjs/microservices';
-import { Observable, Subject } from 'rxjs';
-import { CommandPublisherService } from './command-publisher.service';
+import { Controller } from "@nestjs/common";
+import { GrpcMethod } from "@nestjs/microservices";
+import { Observable, Subject } from "rxjs";
+import { CommandPublisherService } from "./command-publisher.service";
 import type {
   SubscribeRequest,
   CommandPackage,
   AckRequest,
   AckResponse,
-} from 'src/generated/command/v1/command';
+} from "src/generated/command/v1/command";
 
 @Controller()
 export class CommandController {
   constructor(private readonly publisher: CommandPublisherService) {}
 
-  @GrpcMethod('RemoteCommandService')
+  @GrpcMethod("RemoteCommandService")
   subscribeCommands(request: SubscribeRequest): Observable<CommandPackage> {
     const stream$ = this.publisher.subscribe(request.deviceId);
 
@@ -26,7 +26,7 @@ export class CommandController {
     return stream$.asObservable();
   }
 
-  @GrpcMethod('RemoteCommandService')
+  @GrpcMethod("RemoteCommandService")
   acknowledgeCommand(request: AckRequest): AckResponse {
     return this.publisher.acknowledge(
       request.deviceId,

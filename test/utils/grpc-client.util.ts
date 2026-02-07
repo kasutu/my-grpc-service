@@ -1,6 +1,6 @@
-import * as grpc from '@grpc/grpc-js';
-import * as protoLoader from '@grpc/proto-loader';
-import { join } from 'path';
+import * as grpc from "@grpc/grpc-js";
+import * as protoLoader from "@grpc/proto-loader";
+import { join } from "path";
 
 // New v2 analytics client interface
 export interface GrpcAnalyticsClient {
@@ -34,7 +34,9 @@ export interface GrpcAnalyticsClient {
 }
 
 export interface GrpcCommandClient {
-  subscribeCommands(request: { deviceId: string }): grpc.ClientReadableStream<any>;
+  subscribeCommands(request: {
+    deviceId: string;
+  }): grpc.ClientReadableStream<any>;
   acknowledgeCommand(
     request: {
       deviceId: string;
@@ -47,7 +49,10 @@ export interface GrpcCommandClient {
 }
 
 export interface GrpcContentClient {
-  subscribe(request: { deviceId: string; lastReceivedDeliveryId?: string }): grpc.ClientReadableStream<any>;
+  subscribe(request: {
+    deviceId: string;
+    lastReceivedDeliveryId?: string;
+  }): grpc.ClientReadableStream<any>;
   acknowledge(
     request: {
       deviceId: string;
@@ -68,11 +73,11 @@ export class GrpcTestClient {
   private analyticsProto: any;
 
   constructor(private readonly grpcPort: number = 50051) {
-    const srcDir = join(__dirname, '../../src');
+    const srcDir = join(__dirname, "../../src");
 
     // Load command proto - package is remote.v1
     const commandPackageDefinition = protoLoader.loadSync(
-      join(srcDir, 'command/v1/command.proto'),
+      join(srcDir, "command/v1/command.proto"),
       {
         keepCase: true,
         longs: String,
@@ -85,7 +90,7 @@ export class GrpcTestClient {
 
     // Load content proto - package is content.v1
     const contentPackageDefinition = protoLoader.loadSync(
-      join(srcDir, 'content/v1/content.proto'),
+      join(srcDir, "content/v1/content.proto"),
       {
         keepCase: true,
         longs: String,
@@ -98,7 +103,7 @@ export class GrpcTestClient {
 
     // Load analytics proto - package is analytics.v1
     const analyticsPackageDefinition = protoLoader.loadSync(
-      join(srcDir, 'analytics/v1/analytics.proto'),
+      join(srcDir, "analytics/v1/analytics.proto"),
       {
         keepCase: true,
         longs: String,
@@ -107,14 +112,17 @@ export class GrpcTestClient {
         oneofs: true,
       },
     );
-    this.analyticsProto = grpc.loadPackageDefinition(analyticsPackageDefinition);
+    this.analyticsProto = grpc.loadPackageDefinition(
+      analyticsPackageDefinition,
+    );
   }
 
   connect(): void {
     const address = `localhost:${this.grpcPort}`;
 
     // Create command client - package remote.v1
-    const RemoteCommandService = this.commandProto.remote.v1.RemoteCommandService;
+    const RemoteCommandService =
+      this.commandProto.remote.v1.RemoteCommandService;
     this.commandClient = new RemoteCommandService(
       address,
       grpc.credentials.createInsecure(),
@@ -156,19 +164,21 @@ export class GrpcTestClient {
     errors: any[];
   } {
     if (!this.commandClient) {
-      throw new Error('Command client not connected');
+      throw new Error("Command client not connected");
     }
 
     const commands: any[] = [];
     const errors: any[] = [];
     // Use snake_case to match proto field names (protoLoader with keepCase: true)
-    const stream = this.commandClient.subscribeCommands({ device_id: deviceId } as any);
+    const stream = this.commandClient.subscribeCommands({
+      device_id: deviceId,
+    } as any);
 
-    stream.on('data', (command) => {
+    stream.on("data", (command) => {
       commands.push(command);
     });
 
-    stream.on('error', (error) => {
+    stream.on("error", (error) => {
       errors.push(error);
     });
 
@@ -179,10 +189,10 @@ export class GrpcTestClient {
     deviceId: string,
     commandId: string,
     processedSuccessfully: boolean = true,
-    errorMessage: string = '',
+    errorMessage: string = "",
   ): Promise<any> {
     if (!this.commandClient) {
-      throw new Error('Command client not connected');
+      throw new Error("Command client not connected");
     }
 
     return new Promise((resolve, reject) => {
@@ -213,7 +223,7 @@ export class GrpcTestClient {
     errors: any[];
   } {
     if (!this.contentClient) {
-      throw new Error('Content client not connected');
+      throw new Error("Content client not connected");
     }
 
     const contentPackages: any[] = [];
@@ -221,14 +231,14 @@ export class GrpcTestClient {
     // Use snake_case to match proto field names (protoLoader with keepCase: true)
     const stream = this.contentClient.subscribe({
       device_id: deviceId,
-      last_received_delivery_id: lastReceivedDeliveryId || '',
+      last_received_delivery_id: lastReceivedDeliveryId || "",
     } as any);
 
-    stream.on('data', (contentPackage) => {
+    stream.on("data", (contentPackage) => {
       contentPackages.push(contentPackage);
     });
 
-    stream.on('error', (error) => {
+    stream.on("error", (error) => {
       errors.push(error);
     });
 
@@ -239,10 +249,10 @@ export class GrpcTestClient {
     deviceId: string,
     deliveryId: string,
     processedSuccessfully: boolean = true,
-    errorMessage: string = '',
+    errorMessage: string = "",
   ): Promise<any> {
     if (!this.contentClient) {
-      throw new Error('Content client not connected');
+      throw new Error("Content client not connected");
     }
 
     return new Promise((resolve, reject) => {
@@ -265,9 +275,11 @@ export class GrpcTestClient {
   }
 
   // New v2 analytics ingest method
-  async ingest(batchRequest: Parameters<GrpcAnalyticsClient['ingest']>[0]): Promise<any> {
+  async ingest(
+    batchRequest: Parameters<GrpcAnalyticsClient["ingest"]>[0],
+  ): Promise<any> {
     if (!this.analyticsClient) {
-      throw new Error('Analytics client not connected');
+      throw new Error("Analytics client not connected");
     }
 
     return new Promise((resolve, reject) => {
@@ -285,4 +297,4 @@ export class GrpcTestClient {
 }
 
 // Re-export helpers for backward compatibility
-export { delay, waitFor } from '../helpers/async';
+export { delay, waitFor } from "../helpers/async";

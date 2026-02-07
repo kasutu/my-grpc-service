@@ -17,7 +17,7 @@ function test(name: string, fn: () => Promise<void>): TestCase {
 
 async function runTests() {
   console.log('Setting up test environment...\n');
-  
+
   const moduleFixture: TestingModule = await Test.createTestingModule({
     imports: [AppModule],
   }).compile();
@@ -26,7 +26,7 @@ async function runTests() {
   await app.listen(0);
   const httpPort = app.getHttpServer().address().port;
   const httpUrl = `http://localhost:${httpPort}`;
-  
+
   app.connectMicroservice({
     transport: 4,
     options: {
@@ -41,12 +41,12 @@ async function runTests() {
   });
 
   await app.startAllMicroservices();
-  
+
   const grpcServer = (app as any).getMicroservices()[0].serverInstance.grpcClient;
   const boundPorts = grpcServer.boundPorts;
   const firstBinding = boundPorts.values().next().value;
   const grpcPort = firstBinding ? firstBinding.portNumber : 0;
-  
+
   const grpcClient = new GrpcTestClient(grpcPort);
   grpcClient.connect();
   await delay(1000);
@@ -138,13 +138,13 @@ async function runTests() {
         body: JSON.stringify({ name: 'Test Fleet' }),
       });
       if (createRes.status !== 201) throw new Error(`Expected 201, got ${createRes.status}`);
-      
+
       const createBody = await createRes.json();
       const fleetId = createBody.fleet.id;
 
       const getRes = await fetch(`${httpUrl}/fleets/${fleetId}`);
       if (getRes.status !== 200) throw new Error(`Expected 200, got ${getRes.status}`);
-      
+
       const getBody = await getRes.json();
       if (getBody.name !== 'Test Fleet') throw new Error('Fleet name mismatch');
     }),
@@ -163,23 +163,25 @@ async function runTests() {
         campaignId: 'campaign-001',
         playCount: 5,
       });
-      
+
       const response = await grpcClient.ingest({
         batch_id: batchId,
-        events: [{
-          event_id: AnalyticsFixture.generateEventIdBytes(),
-          timestamp_ms: Date.now(),
-          type: 'IMPRESSION',
-          schema_version: 0x00010000,
-          payload: encodePayload(payload),
-          network: {
-            quality: 'GOOD',
-            download_mbps: 10.5,
-            upload_mbps: 5.0,
-            connection_type: 'wifi',
-            signal_strength_dbm: -50,
+        events: [
+          {
+            event_id: AnalyticsFixture.generateEventIdBytes(),
+            timestamp_ms: Date.now(),
+            type: 'IMPRESSION',
+            schema_version: 0x00010000,
+            payload: encodePayload(payload),
+            network: {
+              quality: 'GOOD',
+              download_mbps: 10.5,
+              upload_mbps: 5.0,
+              connection_type: 'wifi',
+              signal_strength_dbm: -50,
+            },
           },
-        }],
+        ],
         device_fingerprint: deviceFingerprint,
         sent_at_ms: Date.now(),
       });
@@ -203,13 +205,15 @@ async function runTests() {
     }),
 
     test('Analytics v2: reject oversized batch', async () => {
-      const events = Array(150).fill(null).map(() => ({
-        event_id: AnalyticsFixture.generateEventIdBytes(),
-        timestamp_ms: Date.now(),
-        type: 'IMPRESSION' as const,
-        schema_version: 0x00010000,
-        payload: encodePayload(AnalyticsFixture.createImpressionPayload()),
-      }));
+      const events = Array(150)
+        .fill(null)
+        .map(() => ({
+          event_id: AnalyticsFixture.generateEventIdBytes(),
+          timestamp_ms: Date.now(),
+          type: 'IMPRESSION' as const,
+          schema_version: 0x00010000,
+          payload: encodePayload(AnalyticsFixture.createImpressionPayload()),
+        }));
 
       const response = await grpcClient.ingest({
         batch_id: AnalyticsFixture.generateBatchIdBytes(),
@@ -224,7 +228,7 @@ async function runTests() {
     // Analytics v2 Tests - HTTP API
     test('Analytics v2: HTTP POST /analytics/ingest/:deviceFingerprint', async () => {
       const deviceFingerprint = 0x65432100;
-      
+
       const response = await fetch(`${httpUrl}/analytics/ingest/${deviceFingerprint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -245,14 +249,14 @@ async function runTests() {
         const body = await response.text();
         throw new Error(`Expected 201, got ${response.status}: ${body}`);
       }
-      
+
       const body = await response.json();
       if (!body.accepted) throw new Error('Batch should be accepted');
     }),
 
     test('Analytics v2: HTTP GET /analytics/devices returns list', async () => {
       const deviceFingerprint = 0x22223333;
-      
+
       // First ingest some analytics
       await ingestAnalyticsHttp(deviceFingerprint, [
         {
@@ -265,17 +269,17 @@ async function runTests() {
 
       const response = await fetch(`${httpUrl}/analytics/devices`);
       if (response.status !== 200) throw new Error(`Expected 200, got ${response.status}`);
-      
+
       const body = await response.json();
       if (!Array.isArray(body.devices)) throw new Error('devices should be an array');
-      
+
       const foundDevice = body.devices.find((d: any) => d.deviceFingerprint === deviceFingerprint);
       if (!foundDevice) throw new Error('Uploaded device not found in list');
     }),
 
     test('Analytics v2: HTTP GET /analytics/devices/:deviceFingerprint/events', async () => {
       const deviceFingerprint = 0x33334444;
-      
+
       await ingestAnalyticsHttp(deviceFingerprint, [
         {
           event_id: AnalyticsFixture.generateUuid(),
@@ -293,7 +297,7 @@ async function runTests() {
 
       const response = await fetch(`${httpUrl}/analytics/devices/${deviceFingerprint}/events`);
       if (response.status !== 200) throw new Error(`Expected 200, got ${response.status}`);
-      
+
       const body = await response.json();
       if (body.deviceFingerprint !== deviceFingerprint) throw new Error('Device fingerprint mismatch');
       if (body.totalEvents !== 2) throw new Error('Expected 2 events');
@@ -302,16 +306,31 @@ async function runTests() {
     test('Analytics v2: HTTP GET /analytics/devices/:deviceFingerprint/summary', async () => {
       const deviceFingerprint = 0x44445555;
       const timestamp = Date.now();
-      
+
       await ingestAnalyticsHttp(deviceFingerprint, [
-        { event_id: AnalyticsFixture.generateUuid(), timestamp_ms: timestamp, type: 'IMPRESSION', payload: { c: 'c1', p: 1, t: timestamp, d: 1000, v: 1 } },
-        { event_id: AnalyticsFixture.generateUuid(), timestamp_ms: timestamp, type: 'ERROR', payload: { code: 'ERR', msg: 'test', v: 1 } },
-        { event_id: AnalyticsFixture.generateUuid(), timestamp_ms: timestamp, type: 'HEARTBEAT', payload: { uptime: 3600000, battery: 50, v: 1 } },
+        {
+          event_id: AnalyticsFixture.generateUuid(),
+          timestamp_ms: timestamp,
+          type: 'IMPRESSION',
+          payload: { c: 'c1', p: 1, t: timestamp, d: 1000, v: 1 },
+        },
+        {
+          event_id: AnalyticsFixture.generateUuid(),
+          timestamp_ms: timestamp,
+          type: 'ERROR',
+          payload: { code: 'ERR', msg: 'test', v: 1 },
+        },
+        {
+          event_id: AnalyticsFixture.generateUuid(),
+          timestamp_ms: timestamp,
+          type: 'HEARTBEAT',
+          payload: { uptime: 3600000, battery: 50, v: 1 },
+        },
       ]);
 
       const response = await fetch(`${httpUrl}/analytics/devices/${deviceFingerprint}/summary`);
       if (response.status !== 200) throw new Error(`Expected 200, got ${response.status}`);
-      
+
       const body = await response.json();
       if (body.deviceFingerprint !== deviceFingerprint) throw new Error('Device fingerprint mismatch');
       if (body.totalEvents !== 3) throw new Error('Expected 3 total events');
@@ -324,25 +343,10 @@ async function runTests() {
       if (response.status !== 404) throw new Error(`Expected 404, got ${response.status}`);
     }),
 
-    test('Analytics v2: HTTP GET /analytics/fleets/:id returns fleet analytics', async () => {
-      const fleetId = await createFleet('Analytics v2 Test Fleet', []);
-      
-      const response = await fetch(`${httpUrl}/analytics/fleets/${fleetId}`);
-      if (response.status !== 200) throw new Error(`Expected 200, got ${response.status}`);
-      
-      const body = await response.json();
-      if (body.fleetId !== fleetId) throw new Error('Fleet ID mismatch');
-    }),
-
-    test('Analytics v2: HTTP GET /analytics/fleets/:id returns 404 for non-existent', async () => {
-      const response = await fetch(`${httpUrl}/analytics/fleets/non-existent-fleet-xyz`);
-      if (response.status !== 404) throw new Error(`Expected 404, got ${response.status}`);
-    }),
-
     test('Analytics v2: HTTP GET /analytics/summary', async () => {
       const response = await fetch(`${httpUrl}/analytics/summary`);
       if (response.status !== 200) throw new Error(`Expected 200, got ${response.status}`);
-      
+
       const body = await response.json();
       if (typeof body.totalDevices !== 'number') throw new Error('totalDevices should be a number');
       if (typeof body.totalEvents !== 'number') throw new Error('totalEvents should be a number');
@@ -368,11 +372,11 @@ async function runTests() {
 
   grpcClient.disconnect();
   await app.close();
-  
+
   process.exit(failed > 0 ? 1 : 0);
 }
 
-runTests().catch(err => {
+runTests().catch((err) => {
   console.error('Test runner error:', err);
   process.exit(1);
 });

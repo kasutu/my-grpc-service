@@ -8,28 +8,31 @@ import {
   HttpStatus,
   Res,
   Query,
-} from '@nestjs/common';
-import type { Response } from 'express';
-import { ContentPublisherService, AckResult } from './content-publisher.service';
-import { ContentMapper } from 'src/content/interfaces/content.mapper';
+} from "@nestjs/common";
+import type { Response } from "express";
+import {
+  ContentPublisherService,
+  AckResult,
+} from "./content-publisher.service";
+import { ContentMapper } from "src/content/interfaces/content.mapper";
 
-@Controller('content')
+@Controller("content")
 export class ContentHttpController {
   constructor(private readonly publisher: ContentPublisherService) {}
 
-  @Post('push/:deviceId')
+  @Post("push/:deviceId")
   @HttpCode(HttpStatus.OK)
   async pushToDevice(
-    @Param('deviceId') deviceId: string,
+    @Param("deviceId") deviceId: string,
     @Body() body: any,
-    @Query('timeout') timeoutMs: string = '5000',
-    @Query('ack') requireAck: string = 'true',
+    @Query("timeout") timeoutMs: string = "5000",
+    @Query("ack") requireAck: string = "true",
     @Res({ passthrough: true }) res: Response,
   ) {
     // Convert snake_case JSON to camelCase interface
     const contentPackage = ContentMapper.toContentPackage({
       ...body,
-      requires_ack: requireAck.toLowerCase() !== 'false',
+      requires_ack: requireAck.toLowerCase() !== "false",
     });
 
     console.log(`Mapped deliveryId: ${contentPackage.deliveryId}`);
@@ -44,16 +47,16 @@ export class ContentHttpController {
     return this.formatResponse(result, res);
   }
 
-  @Post('broadcast')
+  @Post("broadcast")
   @HttpCode(HttpStatus.OK)
   async broadcast(
     @Body() body: any,
-    @Query('timeout') timeoutMs: string = '5000',
-    @Query('ack') requireAck: string = 'true',
+    @Query("timeout") timeoutMs: string = "5000",
+    @Query("ack") requireAck: string = "true",
   ) {
     const contentPackage = ContentMapper.toContentPackage({
       ...body,
-      requires_ack: requireAck.toLowerCase() !== 'false',
+      requires_ack: requireAck.toLowerCase() !== "false",
     });
 
     const timeout = parseInt(timeoutMs, 10) || 5000;
@@ -62,7 +65,7 @@ export class ContentHttpController {
     return this.formatBroadcastResponse(results);
   }
 
-  @Get('stats')
+  @Get("stats")
   getStats() {
     return {
       connected_devices: this.publisher.getConnectedCount(),
@@ -71,7 +74,7 @@ export class ContentHttpController {
 
   private formatResponse(result: AckResult, res: Response) {
     if (!result.success) {
-      if (result.errorMessage?.includes('not connected')) {
+      if (result.errorMessage?.includes("not connected")) {
         res.status(HttpStatus.SERVICE_UNAVAILABLE);
       } else if (result.timedOut) {
         res.status(HttpStatus.REQUEST_TIMEOUT);
@@ -85,7 +88,7 @@ export class ContentHttpController {
       delivery_id: result.deliveryId,
       device_id: result.deviceId,
       message: result.success
-        ? 'Content delivered successfully'
+        ? "Content delivered successfully"
         : result.errorMessage,
       timed_out: result.timedOut ?? false,
     };

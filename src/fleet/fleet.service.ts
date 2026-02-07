@@ -1,17 +1,20 @@
 // File: src/fleet/fleet.service.ts
-import { Injectable, Logger } from '@nestjs/common';
-import { CommandPublisherService, AckResult } from '../command/command-publisher.service';
-import { ContentPublisherService } from '../content/content-publisher.service';
-import type { CommandPackage } from '../generated/command/v1/command';
-import type { ContentPackage } from '../generated/content/v1/content';
+import { Injectable, Logger } from "@nestjs/common";
+import {
+  CommandPublisherService,
+  AckResult,
+} from "../command/command-publisher.service";
+import { ContentPublisherService } from "../content/content-publisher.service";
+import type { CommandPackage } from "../generated/command/v1/command";
+import type { ContentPackage } from "../generated/content/v1/content";
 import type {
   Fleet,
   FleetMember,
   FleetBroadcastResult,
   CreateFleetDto,
   UpdateFleetDto,
-} from './interfaces/fleet.types';
-import { CommandMapper } from '../command/interfaces/command.mapper';
+} from "./interfaces/fleet.types";
+import { CommandMapper } from "../command/interfaces/command.mapper";
 
 export interface FleetCommandResult extends FleetBroadcastResult {
   ackResults: AckResult[];
@@ -203,7 +206,7 @@ export class FleetService {
           result.failed++;
           result.failures.push({
             deviceId,
-            reason: ackResult.errorMessage || 'Command failed',
+            reason: ackResult.errorMessage || "Command failed",
           });
         }
       } catch (error) {
@@ -211,7 +214,7 @@ export class FleetService {
         result.failures.push({ deviceId, reason: error.message });
         result.ackResults.push({
           success: false,
-          commandId: '',
+          commandId: "",
           deviceId,
           errorMessage: error.message,
           timedOut: false,
@@ -262,7 +265,7 @@ export class FleetService {
           result.failed++;
           result.failures.push({
             deviceId,
-            reason: ackResult.errorMessage || 'Content delivery failed',
+            reason: ackResult.errorMessage || "Content delivery failed",
           });
         }
       } catch (error) {

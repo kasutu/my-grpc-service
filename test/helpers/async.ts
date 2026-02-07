@@ -23,7 +23,7 @@ export function waitFor<T>(
         resolve(value);
       } else if (Date.now() - startTime > timeoutMs) {
         clearInterval(interval);
-        reject(new Error('Timeout waiting for condition'));
+        reject(new Error("Timeout waiting for condition"));
       }
     }, 50);
   });

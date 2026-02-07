@@ -17,9 +17,7 @@ export interface CommandPackage {
   commandId: string;
   setClock?: SetClockOverride | undefined;
   requestReboot?: RequestSystemReboot | undefined;
-  updateNetwork?:
-    | UpdateNetworkConfig
-    | undefined;
+  updateNetwork?: UpdateNetworkConfig | undefined;
   /** NEW */
   rotateScreen?: RotateScreen | undefined;
   requiresAck: boolean;
@@ -68,20 +66,36 @@ export interface RemoteCommandServiceClient {
 export interface RemoteCommandServiceController {
   subscribeCommands(request: SubscribeRequest): Observable<CommandPackage>;
 
-  acknowledgeCommand(request: AckRequest): Promise<AckResponse> | Observable<AckResponse> | AckResponse;
+  acknowledgeCommand(
+    request: AckRequest,
+  ): Promise<AckResponse> | Observable<AckResponse> | AckResponse;
 }
 
 export function RemoteCommandServiceControllerMethods() {
   return function (constructor: Function) {
     const grpcMethods: string[] = ["subscribeCommands", "acknowledgeCommand"];
     for (const method of grpcMethods) {
-      const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
-      GrpcMethod("RemoteCommandService", method)(constructor.prototype[method], method, descriptor);
+      const descriptor: any = Reflect.getOwnPropertyDescriptor(
+        constructor.prototype,
+        method,
+      );
+      GrpcMethod("RemoteCommandService", method)(
+        constructor.prototype[method],
+        method,
+        descriptor,
+      );
     }
     const grpcStreamMethods: string[] = [];
     for (const method of grpcStreamMethods) {
-      const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
-      GrpcStreamMethod("RemoteCommandService", method)(constructor.prototype[method], method, descriptor);
+      const descriptor: any = Reflect.getOwnPropertyDescriptor(
+        constructor.prototype,
+        method,
+      );
+      GrpcStreamMethod("RemoteCommandService", method)(
+        constructor.prototype[method],
+        method,
+        descriptor,
+      );
     }
   };
 }

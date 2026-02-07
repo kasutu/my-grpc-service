@@ -3,8 +3,11 @@ import type {
   Event,
   NetworkContext,
   QueueStatus,
-} from '../../src/generated/analytics/v1/analytics';
-import { EventType, ConnectionQuality } from '../../src/generated/analytics/v1/analytics';
+} from "../../src/generated/analytics/v1/analytics";
+import {
+  EventType,
+  ConnectionQuality,
+} from "../../src/generated/analytics/v1/analytics";
 
 /**
  * Fixture utilities for analytics v2 testing
@@ -32,7 +35,7 @@ export class AnalyticsFixture {
    * Generate a hex UUID string
    */
   static generateUuid(): string {
-    return this.generateUuidBytes().toString('hex');
+    return this.generateUuidBytes().toString("hex");
   }
 
   /**
@@ -74,12 +77,12 @@ export class AnalyticsFixture {
     lastMediaId?: string;
   }): Record<string, unknown> {
     return {
-      c: options?.campaignId ?? 'campaign-001',  // campaignId
-      p: options?.playCount ?? 1,                 // playCount
-      t: options?.lastPlayedAt ?? Date.now(),     // lastPlayedAt timestamp
-      d: options?.totalPlayTimeMs ?? 5000,        // totalPlayTime
-      m: options?.lastMediaId ?? 'media-001',     // lastMediaId
-      v: 1,                                       // schema version
+      c: options?.campaignId ?? "campaign-001", // campaignId
+      p: options?.playCount ?? 1, // playCount
+      t: options?.lastPlayedAt ?? Date.now(), // lastPlayedAt timestamp
+      d: options?.totalPlayTimeMs ?? 5000, // totalPlayTime
+      m: options?.lastMediaId ?? "media-001", // lastMediaId
+      v: 1, // schema version
     };
   }
 
@@ -93,9 +96,9 @@ export class AnalyticsFixture {
     fatal?: boolean;
   }): Record<string, unknown> {
     return {
-      code: options?.code ?? 'NETWORK_ERROR',
-      msg: options?.message ?? 'Failed to download media',
-      component: options?.component ?? 'DownloadManager',
+      code: options?.code ?? "NETWORK_ERROR",
+      msg: options?.message ?? "Failed to download media",
+      component: options?.component ?? "DownloadManager",
       fatal: options?.fatal ?? false,
       v: 1,
     };
@@ -109,7 +112,7 @@ export class AnalyticsFixture {
     battery?: number;
   }): Record<string, unknown> {
     return {
-      uptime: options?.uptime ?? 3600000,  // 1 hour in ms
+      uptime: options?.uptime ?? 3600000, // 1 hour in ms
       battery: options?.battery ?? 85,
       v: 1,
     };
@@ -139,7 +142,7 @@ export class AnalyticsFixture {
     prevState?: string;
   }): Record<string, unknown> {
     return {
-      action: options?.action ?? 'app_start',
+      action: options?.action ?? "app_start",
       prevState: options?.prevState,
       v: 1,
     };
@@ -158,15 +161,20 @@ export class AnalyticsFixture {
       eventId: this.generateEventIdBytes(),
       timestampMs: Date.now(),
       type: options?.type ?? EventType.IMPRESSION,
-      schemaVersion: options?.schemaVersion ?? 0x00010000,  // v1.0.0
-      payload: Buffer.from(JSON.stringify(options?.payload ?? this.createImpressionPayload())),
-      network: options?.networkQuality !== undefined ? {
-        quality: options.networkQuality,
-        downloadMbps: 10.5,
-        uploadMbps: 5.0,
-        connectionType: 'wifi',
-        signalStrengthDbm: -50,
-      } : undefined,
+      schemaVersion: options?.schemaVersion ?? 0x00010000, // v1.0.0
+      payload: Buffer.from(
+        JSON.stringify(options?.payload ?? this.createImpressionPayload()),
+      ),
+      network:
+        options?.networkQuality !== undefined
+          ? {
+              quality: options.networkQuality,
+              downloadMbps: 10.5,
+              uploadMbps: 5.0,
+              connectionType: "wifi",
+              signalStrengthDbm: -50,
+            }
+          : undefined,
     };
   }
 
@@ -229,12 +237,14 @@ export class AnalyticsFixture {
   /**
    * Create a network context
    */
-  static createNetworkContext(overrides?: Partial<NetworkContext>): NetworkContext {
+  static createNetworkContext(
+    overrides?: Partial<NetworkContext>,
+  ): NetworkContext {
     return {
       quality: ConnectionQuality.GOOD,
       downloadMbps: 10.5,
       uploadMbps: 5.0,
-      connectionType: 'wifi',
+      connectionType: "wifi",
       signalStrengthDbm: -50,
       ...overrides,
     };
@@ -259,39 +269,59 @@ export class AnalyticsFixture {
     deviceFingerprint: number,
     options?: {
       eventCount?: number;
-      eventTypes?: ('impression' | 'error' | 'heartbeat' | 'performance' | 'lifecycle')[];
+      eventTypes?: (
+        | "impression"
+        | "error"
+        | "heartbeat"
+        | "performance"
+        | "lifecycle"
+      )[];
       networkQuality?: ConnectionQuality;
     },
   ): Batch {
     const eventCount = options?.eventCount ?? 5;
-    const eventTypes = options?.eventTypes ?? ['impression'];
+    const eventTypes = options?.eventTypes ?? ["impression"];
     const events: Event[] = [];
 
     for (let i = 0; i < eventCount; i++) {
       const type = eventTypes[i % eventTypes.length];
       switch (type) {
-        case 'impression':
-          events.push(this.createImpressionEvent({ networkQuality: options?.networkQuality }));
+        case "impression":
+          events.push(
+            this.createImpressionEvent({
+              networkQuality: options?.networkQuality,
+            }),
+          );
           break;
-        case 'error':
-          events.push(this.createErrorEvent({ networkQuality: options?.networkQuality }));
+        case "error":
+          events.push(
+            this.createErrorEvent({ networkQuality: options?.networkQuality }),
+          );
           break;
-        case 'heartbeat':
-          events.push(this.createHeartbeatEvent({ networkQuality: options?.networkQuality }));
+        case "heartbeat":
+          events.push(
+            this.createHeartbeatEvent({
+              networkQuality: options?.networkQuality,
+            }),
+          );
           break;
-        case 'performance':
-          events.push(this.createEvent({
-            type: EventType.PERFORMANCE,
-            payload: this.createPerformancePayload(),
-            networkQuality: options?.networkQuality,
-          }));
+        case "performance":
+          events.push(
+            this.createEvent({
+              type: EventType.PERFORMANCE,
+              payload: this.createPerformancePayload(),
+              networkQuality: options?.networkQuality,
+            }),
+          );
           break;
-        case 'lifecycle':
-          events.push(this.createEvent({
-            type: EventType.LIFECYCLE,
-            payload: this.createLifecyclePayload(),
-            networkQuality: options?.networkQuality,
-          }));
+        case "lifecycle":
+          events.push(
+            this.createEvent({
+              type: EventType.LIFECYCLE,
+              payload: this.createLifecyclePayload(),
+              networkQuality: options?.networkQuality,
+            }),
+          );
           break;
       }
     }
@@ -311,17 +341,20 @@ export class AnalyticsFixture {
   static createMixedBatch(deviceFingerprint: number, eventCount = 10): Batch {
     return this.createBatch(deviceFingerprint, {
       eventCount,
-      eventTypes: ['impression', 'error', 'heartbeat'],
+      eventTypes: ["impression", "error", "heartbeat"],
     });
   }
 
   /**
    * Create a batch with only impression events
    */
-  static createImpressionBatch(deviceFingerprint: number, eventCount = 5): Batch {
+  static createImpressionBatch(
+    deviceFingerprint: number,
+    eventCount = 5,
+  ): Batch {
     return this.createBatch(deviceFingerprint, {
       eventCount,
-      eventTypes: ['impression'],
+      eventTypes: ["impression"],
     });
   }
 
@@ -331,22 +364,24 @@ export class AnalyticsFixture {
   static createErrorBatch(deviceFingerprint: number, eventCount = 5): Batch {
     return this.createBatch(deviceFingerprint, {
       eventCount,
-      eventTypes: ['error'],
+      eventTypes: ["error"],
     });
   }
 
   /**
    * Create an invalid batch (missing required fields)
    */
-  static createInvalidBatch(type: 'missing_fingerprint' | 'missing_batch_id' | 'empty_events'): Batch {
+  static createInvalidBatch(
+    type: "missing_fingerprint" | "missing_batch_id" | "empty_events",
+  ): Batch {
     const base = this.createBatch(12345);
 
     switch (type) {
-      case 'missing_fingerprint':
+      case "missing_fingerprint":
         return { ...base, deviceFingerprint: 0 };
-      case 'missing_batch_id':
+      case "missing_batch_id":
         return { ...base, batchId: Buffer.alloc(0) };
-      case 'empty_events':
+      case "empty_events":
         return { ...base, events: [] };
       default:
         return base;
@@ -364,31 +399,27 @@ export class AnalyticsFixture {
    * Sample device fingerprints for testing
    */
   static readonly SAMPLE_DEVICE_FINGERPRINTS = [
-    0x12345678,
-    0xabcdef01,
-    0x99998888,
-    0x11111111,
-    0xdeadbeef,
+    0x12345678, 0xabcdef01, 0x99998888, 0x11111111, 0xdeadbeef,
   ];
 
   /**
    * Sample campaign IDs for testing
    */
   static readonly SAMPLE_CAMPAIGN_IDS = [
-    'campaign-001',
-    'campaign-002',
-    'campaign-promo-summer',
-    'campaign-brand-awareness',
+    "campaign-001",
+    "campaign-002",
+    "campaign-promo-summer",
+    "campaign-brand-awareness",
   ];
 
   /**
    * Sample media IDs for testing
    */
   static readonly SAMPLE_MEDIA_IDS = [
-    'media-001',
-    'media-002',
-    'video-ad-001.mp4',
-    'image-banner-002.jpg',
+    "media-001",
+    "media-002",
+    "video-ad-001.mp4",
+    "image-banner-002.jpg",
   ];
 }
 
@@ -410,9 +441,11 @@ export const AnalyticsFixtures = {
    * Invalid batches for error testing
    */
   invalidBatches: {
-    missingFingerprint: AnalyticsFixture.createInvalidBatch('missing_fingerprint'),
-    missingBatchId: AnalyticsFixture.createInvalidBatch('missing_batch_id'),
-    emptyEvents: AnalyticsFixture.createInvalidBatch('empty_events'),
+    missingFingerprint: AnalyticsFixture.createInvalidBatch(
+      "missing_fingerprint",
+    ),
+    missingBatchId: AnalyticsFixture.createInvalidBatch("missing_batch_id"),
+    emptyEvents: AnalyticsFixture.createInvalidBatch("empty_events"),
   },
 
   /**
