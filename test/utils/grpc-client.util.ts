@@ -2,6 +2,50 @@ import * as grpc from '@grpc/grpc-js';
 import * as protoLoader from '@grpc/proto-loader';
 import { join } from 'path';
 
+export interface GrpcAnalyticsClient {
+  uploadBatch(
+    request: {
+      device_id: string;
+      batch_id: string;
+      timestamp_ms: number;
+      events: Array<{
+        event_id: string;
+        timestamp_ms: number;
+        category: number;
+        playback?: {
+          campaign_id: string;
+          media_id: string;
+          duration_ms: number;
+          completed: boolean;
+        };
+        error?: {
+          error_type: string;
+          message: string;
+          component: string;
+          is_fatal: boolean;
+        };
+        health?: {
+          battery_level: number;
+          storage_free_bytes: number;
+          cpu_usage: number;
+          memory_usage: number;
+          connection_quality: number;
+        };
+      }>;
+      network_context?: {
+        quality: number;
+        download_speed_mbps: number;
+        latency_ms: number;
+      };
+      queue_status?: {
+        pending_count: number;
+        oldest_event_hours: number;
+      };
+    },
+    callback: (err: grpc.ServiceError | null, response: any) => void,
+  ): void;
+}
+
 export interface GrpcCommandClient {
   subscribeCommands(request: { deviceId: string }): grpc.ClientReadableStream<any>;
   acknowledgeCommand(
@@ -31,8 +75,10 @@ export interface GrpcContentClient {
 export class GrpcTestClient {
   private commandClient: GrpcCommandClient | null = null;
   private contentClient: GrpcContentClient | null = null;
+  private analyticsClient: GrpcAnalyticsClient | null = null;
   private commandProto: any;
   private contentProto: any;
+  private analyticsProto: any;
 
   constructor(private readonly grpcPort: number = 50051) {
     const srcDir = join(__dirname, '../../src');
@@ -62,6 +108,19 @@ export class GrpcTestClient {
       },
     );
     this.contentProto = grpc.loadPackageDefinition(contentPackageDefinition);
+
+    // Load analytics proto - package is analytics.v1
+    const analyticsPackageDefinition = protoLoader.loadSync(
+      join(srcDir, 'analytics/v1/analytics.proto'),
+      {
+        keepCase: true,
+        longs: String,
+        enums: String,
+        defaults: true,
+        oneofs: true,
+      },
+    );
+    this.analyticsProto = grpc.loadPackageDefinition(analyticsPackageDefinition);
   }
 
   connect(): void {
@@ -80,6 +139,13 @@ export class GrpcTestClient {
       address,
       grpc.credentials.createInsecure(),
     ) as GrpcContentClient;
+
+    // Create analytics client - package analytics.v1
+    const AnalyticsService = this.analyticsProto.analytics.v1.AnalyticsService;
+    this.analyticsClient = new AnalyticsService(
+      address,
+      grpc.credentials.createInsecure(),
+    ) as GrpcAnalyticsClient;
   }
 
   disconnect(): void {
@@ -90,6 +156,10 @@ export class GrpcTestClient {
     if (this.contentClient) {
       (this.contentClient as any).close();
       this.contentClient = null;
+    }
+    if (this.analyticsClient) {
+      (this.analyticsClient as any).close();
+      this.analyticsClient = null;
     }
   }
 
@@ -204,6 +274,22 @@ export class GrpcTestClient {
           }
         },
       );
+    });
+  }
+
+  async uploadBatch(batchRequest: Parameters<GrpcAnalyticsClient['uploadBatch']>[0]): Promise<any> {
+    if (!this.analyticsClient) {
+      throw new Error('Analytics client not connected');
+    }
+
+    return new Promise((resolve, reject) => {
+      this.analyticsClient!.uploadBatch(batchRequest as any, (err, response) => {
+        if (err) {
+          reject(err);
+        } else {
+          resolve(response);
+        }
+      });
     });
   }
 }
