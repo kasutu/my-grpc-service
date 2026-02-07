@@ -57,17 +57,6 @@ async function runTests() {
     return { commands };
   }
 
-  // Helper to create a fleet and return the ID
-  async function createFleet(name: string, deviceIds: string[] = []): Promise<string> {
-    const res = await fetch(`${httpUrl}/fleets`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, deviceIds }),
-    });
-    const body = await res.json();
-    return body.fleet.id;
-  }
-
   // Helper to ingest analytics via HTTP (v2 API)
   async function ingestAnalyticsHttp(deviceFingerprint: number, events: any[]) {
     const response = await fetch(`${httpUrl}/analytics/ingest/${deviceFingerprint}`, {
