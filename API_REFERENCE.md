@@ -225,101 +225,82 @@ Event ingestion service for device telemetry.
 
 | Method | Type | Description |
 |--------|------|-------------|
-| `UploadBatch` | Unary | Submit batch of analytics events |
+| `Ingest` | Unary | Submit batch of analytics events (v2) |
+| `Stream` | Bidirectional | Real-time event streaming (v2) |
 
-#### UploadBatch
+#### Ingest (v2)
 
 ```protobuf
-rpc UploadBatch(AnalyticsBatch) returns (BatchAck);
+rpc Ingest(Batch) returns (Ack);
 ```
 
 **Request:**
 ```protobuf
-message AnalyticsBatch {
-  string device_id = 1;
-  string batch_id = 2;
-  int64 timestamp_ms = 3;
-  repeated AnalyticsEvent events = 4;
-  NetworkContext network_context = 5;
-  QueueStatus queue_status = 6;
+message Batch {
+  bytes batch_id = 1;               // 16-byte UUID
+  repeated Event events = 2;        // Multiple events
+  fixed32 device_fingerprint = 3;   // 4-byte device hash
+  QueueStatus queue = 4;            // Backpressure signal
+  fixed64 sent_at_ms = 5;           // Batch creation time
 }
 
-message AnalyticsEvent {
-  string event_id = 1;
-  int64 timestamp_ms = 2;
-  EventCategory category = 3;
-  oneof payload {
-    PlaybackEvent playback = 10;
-    ErrorEvent error = 11;
-    HealthEvent health = 12;
-  }
+message Event {
+  bytes event_id = 1;           // 16-byte UUID (binary)
+  fixed64 timestamp_ms = 2;     // 8 bytes fixed
+  EventType type = 3;           // Enum = 1 byte varint
+  fixed32 schema_version = 4;   // 0x00MMmmPP = major.minor.patch
+  bytes payload = 5;            // CBOR/MsgPack/JSON encoded data
+  NetworkContext network = 6;   // Optional: network at event time
 }
 
-enum EventCategory {
-  EVENT_CATEGORY_UNSPECIFIED = 0;
-  EVENT_CATEGORY_PLAYBACK = 1;
-  EVENT_CATEGORY_ERROR = 2;
-  EVENT_CATEGORY_HEALTH = 3;
-}
-
-message PlaybackEvent {
-  string campaign_id = 1;
-  string media_id = 2;
-  int64 duration_ms = 3;
-  bool completed = 4;
-}
-
-message ErrorEvent {
-  string error_type = 1;
-  string message = 2;
-  string stack_trace = 3;
-  string component = 4;
-  bool is_fatal = 5;
-}
-
-message HealthEvent {
-  float battery_level = 1;
-  int64 storage_free_bytes = 2;
-  float cpu_usage = 3;
-  float memory_usage = 4;
-  ConnectionQuality connection_quality = 5;
+enum EventType {
+  EVENT_TYPE_UNSPECIFIED = 0;
+  ERROR = 1;         // Urgent - upload on FAIR+ connections
+  IMPRESSION = 2;    // Normal - upload on GOOD+ connections
+  HEARTBEAT = 3;     // Background - EXCELLENT only
+  PERFORMANCE = 4;   // Background - EXCELLENT only
+  LIFECYCLE = 5;     // Normal - upload on GOOD+ connections
 }
 
 message NetworkContext {
   ConnectionQuality quality = 1;
-  float download_speed_mbps = 2;
-  int64 latency_ms = 3;
+  double download_mbps = 2;
+  double upload_mbps = 3;
+  string connection_type = 4;      // wifi, ethernet, cellular, unknown
+  int32 signal_strength_dbm = 5;   // For wifi/cellular
 }
 
 enum ConnectionQuality {
   CONNECTION_QUALITY_UNSPECIFIED = 0;
-  CONNECTION_QUALITY_EXCELLENT = 1;
-  CONNECTION_QUALITY_GOOD = 2;
-  CONNECTION_QUALITY_FAIR = 3;
-  CONNECTION_QUALITY_POOR = 4;
-  CONNECTION_QUALITY_OFFLINE = 5;
+  OFFLINE = 1;       // No upload
+  POOR = 2;          // < 1 Mbps, errors only
+  FAIR = 3;          // 1-5 Mbps, urgent only
+  GOOD = 4;          // 5-20 Mbps, normal uploads
+  EXCELLENT = 5;     // > 20 Mbps, all events
 }
 
 message QueueStatus {
-  int32 pending_count = 1;
-  int32 oldest_event_hours = 2;
+  int32 pending_events = 1;
+  int32 oldest_event_age_hours = 2;
+  bool is_backpressure = 3;
 }
 ```
 
 **Response:**
 ```protobuf
-message BatchAck {
-  bool accepted = 1;
-  string batch_id = 2;
-  repeated string failed_event_ids = 3;
-  string rejection_reason = 4;
-  UploadPolicy policy = 5;
+message Ack {
+  bytes batch_id = 1;
+  bool accepted = 2;
+  repeated bytes rejected_event_ids = 3;  // 16-byte UUIDs
+  uint32 throttle_ms = 4;     // Server backpressure
+  Policy policy = 5;          // Updated policy (optional)
 }
 
-message UploadPolicy {
-  int32 max_batch_size = 1;
-  int32 sync_interval_seconds = 2;
-  repeated int32 retry_delays_seconds = 3;
+message Policy {
+  ConnectionQuality min_quality = 1;   // Minimum quality for uploads
+  int32 max_batch_size = 2;            // Max events per batch
+  int32 max_queue_age_hours = 3;       // Force upload if older
+  int32 upload_interval_seconds = 4;   // Suggested upload interval
 }
 ```
 
@@ -1099,13 +1080,78 @@ List all devices that have analytics data.
   "total": 3,
   "devices": [
     {
-      "deviceId": "device-001",
+      "deviceFingerprint": 305419896,
       "lastSeen": "2024-01-01T12:00:00.000Z",
       "totalEvents": 150,
-      "playbackCount": 100,
-      "errorCount": 5
+      "eventsByType": {
+        "ERROR": 5,
+        "IMPRESSION": 100,
+        "HEARTBEAT": 30,
+        "PERFORMANCE": 10,
+        "LIFECYCLE": 5,
+        "UNKNOWN": 0
+      }
     }
   ]
+}
+```
+
+---
+
+#### Ingest Events (v2)
+
+```http
+POST /analytics/ingest/:deviceFingerprint
+```
+
+Submit analytics events. Payload is JSON and will be encoded to CBOR by the server.
+
+**Path Parameters:**
+| Name | Type | Description |
+|------|------|-------------|
+| deviceFingerprint | number | 4-byte device fingerprint |
+
+**Request Body:**
+```json
+{
+  "events": [
+    {
+      "event_id": "550e8400e29b41d4a716446655440000",
+      "timestamp_ms": 1704121200000,
+      "type": "IMPRESSION",
+      "schema_version": 65536,
+      "payload": {"c": "campaign-001", "p": 1, "t": 1704121200000, "d": 5000, "v": 1},
+      "network": {
+        "quality": "GOOD",
+        "download_mbps": 10.5,
+        "upload_mbps": 5.0,
+        "connection_type": "wifi",
+        "signal_strength_dbm": -50
+      }
+    }
+  ],
+  "queue": {
+    "pending_events": 5,
+    "oldest_event_age_hours": 1,
+    "is_backpressure": false
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "accepted": true,
+  "batch_id": "aaaaaaaaaaaaaaaaaaaaaaaa",
+  "events_received": 1,
+  "events_stored": 1,
+  "rejected_event_ids": [],
+  "policy": {
+    "min_quality": 3,
+    "max_batch_size": 100,
+    "max_queue_age_hours": 24,
+    "upload_interval_seconds": 300
+  }
 }
 ```
 
@@ -1114,7 +1160,7 @@ List all devices that have analytics data.
 #### Get Device Events
 
 ```http
-GET /analytics/devices/:deviceId/events
+GET /analytics/devices/:deviceFingerprint/events
 ```
 
 Get analytics events for a device.
@@ -1122,31 +1168,27 @@ Get analytics events for a device.
 **Path Parameters:**
 | Name | Type | Description |
 |------|------|-------------|
-| deviceId | string | Device ID |
+| deviceFingerprint | number | Device fingerprint |
 
 **Query Parameters:**
 | Name | Type | Description |
 |------|------|-------------|
-| category | string | Filter by category: `PLAYBACK`, `ERROR`, `HEALTH` |
+| type | number | Filter by event type: `1=ERROR`, `2=IMPRESSION`, `3=HEARTBEAT`, `4=PERFORMANCE`, `5=LIFECYCLE` |
 | limit | number | Maximum events to return (default: 100) |
 
 **Response:**
 ```json
 {
-  "deviceId": "device-001",
+  "deviceFingerprint": 305419896,
   "totalEvents": 50,
   "events": [
     {
-      "eventId": "evt-001",
-      "batchId": "batch-001",
+      "eventId": "aaaaaaaaaaaaaaaaaaaaaaaa",
+      "batchId": "bbbbbbbbbbbbbbbbbbbbbbbb",
       "timestamp": "2024-01-01T12:00:00.000Z",
-      "category": "PLAYBACK",
-      "payload": {
-        "campaignId": "campaign-001",
-        "mediaId": "media-001",
-        "durationMs": 5000,
-        "completed": true
-      }
+      "type": "IMPRESSION",
+      "schemaVersion": "1.0.0",
+      "payload": {"c": "campaign-001", "p": 1, "t": 1704121200000, "d": 5000, "v": 1}
     }
   ]
 }
@@ -1157,7 +1199,7 @@ Get analytics events for a device.
 #### Get Device Summary
 
 ```http
-GET /analytics/devices/:deviceId/summary
+GET /analytics/devices/:deviceFingerprint/summary
 ```
 
 Get analytics summary for a device.
@@ -1165,18 +1207,18 @@ Get analytics summary for a device.
 **Response:**
 ```json
 {
-  "deviceId": "device-001",
+  "deviceFingerprint": 305419896,
   "lastSeen": "2024-01-01T12:00:00.000Z",
   "totalEvents": 150,
-  "playbackCount": 100,
-  "errorCount": 5,
-  "lastHealthSnapshot": {
-    "batteryLevel": 85.5,
-    "storageFreeBytes": 2147483648,
-    "cpuUsage": 25.0,
-    "memoryUsage": 40.0,
-    "connectionQuality": "GOOD"
-  }
+  "eventsByType": {
+    "ERROR": 5,
+    "IMPRESSION": 100,
+    "HEARTBEAT": 30,
+    "PERFORMANCE": 10,
+    "LIFECYCLE": 5,
+    "UNKNOWN": 0
+  },
+  "lastNetworkQuality": "GOOD"
 }
 ```
 
@@ -1187,196 +1229,23 @@ Get analytics summary for a device.
 
 ---
 
-#### Get Device Queue Status
+#### Get Server Policy
 
 ```http
-GET /analytics/devices/:deviceId/queue
+GET /analytics/policy
 ```
 
-Get analytics queue status for a device.
+Get the current server upload policy.
 
 **Response:**
 ```json
 {
-  "deviceId": "device-001",
-  "pendingCount": 10,
-  "oldestEventHours": 2
+  "min_quality": 3,
+  "max_batch_size": 100,
+  "max_queue_age_hours": 24,
+  "upload_interval_seconds": 300
 }
 ```
-
----
-
-#### Get Fleet Analytics
-
-```http
-GET /analytics/fleets/:fleetId
-```
-
-Get comprehensive analytics for a fleet.
-
-**Response:**
-```json
-{
-  "fleetId": "fleet-abc123",
-  "totalDevices": 5,
-  "totalEvents": 500,
-  "playbackStats": {
-    "totalPlays": 400,
-    "uniqueCampaigns": 3,
-    "averageDurationMs": 4500
-  },
-  "errorStats": {
-    "totalErrors": 20,
-    "fatalErrors": 2,
-    "topComponents": [
-      { "component": "Downloader", "count": 10 },
-      { "component": "Parser", "count": 5 }
-    ]
-  },
-  "healthOverview": {
-    "healthyDevices": 4,
-    "warningDevices": 1,
-    "criticalDevices": 0
-  }
-}
-```
-
----
-
-#### Get Fleet Playback Stats
-
-```http
-GET /analytics/fleets/:fleetId/playback
-```
-
-Get playback statistics for a fleet.
-
-**Response:**
-```json
-{
-  "totalPlays": 400,
-  "uniqueCampaigns": 3,
-  "campaignBreakdown": [
-    {
-      "campaignId": "campaign-001",
-      "playCount": 200,
-      "totalDurationMs": 900000
-    },
-    {
-      "campaignId": "campaign-002",
-      "playCount": 150,
-      "totalDurationMs": 675000
-    }
-  ]
-}
-```
-
----
-
-#### Get Fleet Error Stats
-
-```http
-GET /analytics/fleets/:fleetId/errors
-```
-
-Get error statistics for a fleet.
-
-**Response:**
-```json
-{
-  "totalErrors": 20,
-  "fatalErrors": 2,
-  "byComponent": [
-    { "component": "Downloader", "count": 10 },
-    { "component": "Parser", "count": 5 },
-    { "component": "Player", "count": 5 }
-  ],
-  "byType": [
-    { "type": "NETWORK_ERROR", "count": 12 },
-    { "type": "PARSE_ERROR", "count": 8 }
-  ],
-  "recentErrors": [
-    {
-      "eventId": "evt-001",
-      "deviceId": "device-001",
-      "timestamp": "2024-01-01T12:00:00.000Z",
-      "payload": {
-        "errorType": "NETWORK_ERROR",
-        "message": "Connection timeout",
-        "component": "Downloader",
-        "isFatal": false
-      }
-    }
-  ]
-}
-```
-
----
-
-#### Get Fleet Health Overview
-
-```http
-GET /analytics/fleets/:fleetId/health
-```
-
-Get health overview for a fleet.
-
-**Response:**
-```json
-{
-  "totalDevices": 5,
-  "onlineDevices": 4,
-  "offlineDevices": 1,
-  "deviceHealth": [
-    {
-      "deviceId": "device-001",
-      "lastSeen": 1704121200000,
-      "health": "healthy"
-    },
-    {
-      "deviceId": "device-002",
-      "lastSeen": 1704121000000,
-      "health": "warning"
-    }
-  ]
-}
-```
-
----
-
-#### Get Fleet Events
-
-```http
-GET /analytics/fleets/:fleetId/events
-```
-
-Get all events from devices in a fleet.
-
-**Query Parameters:**
-| Name | Type | Description |
-|------|------|-------------|
-| category | string | Filter by category: `PLAYBACK`, `ERROR`, `HEALTH` |
-| limit | number | Maximum events to return (default: 100) |
-
-**Response:**
-```json
-{
-  "fleetId": "fleet-abc123",
-  "totalDevices": 5,
-  "totalEvents": 500,
-  "events": [
-    {
-      "eventId": "evt-001",
-      "deviceId": "device-001",
-      "timestamp": "2024-01-01T12:00:00.000Z",
-      "category": "PLAYBACK",
-      "payload": { ... }
-    }
-  ]
-}
-```
-
----
 
 ## Common Types
 
@@ -1391,14 +1260,16 @@ Get all events from devices in a fleet.
 | 4 | `POOR` | < 1 Mbps |
 | 5 | `OFFLINE` | No connection |
 
-### EventCategory Enum
+### EventType Enum
 
-| Value | Description |
-|-------|-------------|
-| 0 | `UNSPECIFIED` |
-| 1 | `PLAYBACK` - Media playback events |
-| 2 | `ERROR` - Application errors |
-| 3 | `HEALTH` - Device health metrics |
+| Value | Name | Description | Upload Priority |
+|-------|------|-------------|-----------------|
+| 0 | `UNSPECIFIED` | Unknown type | - |
+| 1 | `ERROR` | Application errors | Urgent (FAIR+) |
+| 2 | `IMPRESSION` | Media impression events | Normal (GOOD+) |
+| 3 | `HEARTBEAT` | Device heartbeat | Background (EXCELLENT) |
+| 4 | `PERFORMANCE` | Performance metrics | Background (EXCELLENT) |
+| 5 | `LIFECYCLE` | App lifecycle events | Normal (GOOD+) |
 
 ---
 
@@ -1441,25 +1312,28 @@ grpcurl -plaintext localhost:50051 list
 # List methods in AnalyticsService
 grpcurl -plaintext localhost:50051 list analytics.v1.AnalyticsService
 
-# Upload analytics batch
+# Ingest analytics batch (v2) - uses binary UUIDs and CBOR payload
+# Note: grpcurl requires base64 encoding for bytes fields
 echo '{
-  "device_id": "device-001",
-  "batch_id": "batch-001",
-  "timestamp_ms": 1704121200000,
+  "batch_id": "AAAAAAAAAAAAAAAAAAAAAQ==",
+  "device_fingerprint": 305419896,
+  "sent_at_ms": "1704121200000",
   "events": [
     {
-      "event_id": "evt-001",
-      "timestamp_ms": 1704121200000,
-      "category": 1,
-      "playback": {
-        "campaign_id": "campaign-001",
-        "media_id": "media-001",
-        "duration_ms": 5000,
-        "completed": true
+      "event_id": "AAAAAAAAAAAAAAAAAAAAAg==",
+      "timestamp_ms": "1704121200000",
+      "type": "IMPRESSION",
+      "schema_version": 65536,
+      "payload": "omNpZGNhbXBhaWduLTAwMXBpAXRqMTcwNDEyMTIwMDAwMGRqNTAwMHZoAQ==",
+      "network": {
+        "quality": "GOOD",
+        "download_mbps": 10.5,
+        "upload_mbps": 5.0,
+        "connection_type": "wifi"
       }
     }
   ]
-}' | grpcurl -plaintext -d @ localhost:50051 analytics.v1.AnalyticsService/UploadBatch
+}' | grpcurl -plaintext -d @ localhost:50051 analytics.v1.AnalyticsService/Ingest
 ```
 
 ### HTTP with curl
@@ -1468,11 +1342,29 @@ echo '{
 # Get analytics summary
 curl http://localhost:31691/analytics/summary
 
-# Get device events
-curl http://localhost:31691/analytics/devices/device-001/events
+# Get device events (v2 uses device fingerprint)
+curl http://localhost:31691/analytics/devices/305419896/events
 
-# Get fleet analytics
-curl http://localhost:31691/analytics/fleets/fleet-abc123
+# Ingest events (v2) - payload is JSON, encoded to CBOR by server
+curl -X POST http://localhost:31691/analytics/ingest/305419896 \
+  -H "Content-Type: application/json" \
+  -d '{
+    "events": [
+      {
+        "event_id": "550e8400e29b41d4a716446655440000",
+        "timestamp_ms": 1704121200000,
+        "type": "IMPRESSION",
+        "schema_version": 65536,
+        "payload": {"c": "campaign-001", "p": 1, "t": 1704121200000, "d": 5000, "v": 1},
+        "network": {
+          "quality": "GOOD",
+          "download_mbps": 10.5,
+          "upload_mbps": 5.0,
+          "connection_type": "wifi"
+        }
+      }
+    ]
+  }'
 
 # Create a fleet
 curl -X POST http://localhost:31691/fleets \

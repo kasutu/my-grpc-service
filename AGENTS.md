@@ -67,8 +67,7 @@ src/
 │   ├── analytics-http.controller.ts # HTTP REST endpoints
 │   ├── analytics.service.ts         # Batch processing logic
 │   ├── services/
-│   │   ├── analytics-store.service.ts   # Event storage with TTL
-│   │   └── fleet-analytics.service.ts   # Fleet-level aggregation
+│   │   └── analytics-store.service.ts   # Event storage with TTL
 │   ├── interfaces/
 │   │   ├── analytics.mapper.ts      # JSON → Protobuf mapper
 │   │   └── analytics.types.ts       # TypeScript interfaces
@@ -81,6 +80,12 @@ src/
 
 test/
 ├── e2e.ts                       # End-to-end tests (Bun runtime)
+├── fixtures/
+│   └── analytics.fixture.ts     # Analytics v2 test fixtures
+├── helpers/
+│   └── async.ts                 # Async test helpers
+├── types/
+│   └── test.types.ts            # Test type definitions
 └── utils/
     └── grpc-client.util.ts      # gRPC test client utilities
 ```
@@ -281,10 +286,7 @@ GET    /analytics/events/:deviceId         # Get events for specific device
 GET    /analytics/devices                  # List devices with analytics
 GET    /analytics/devices/:deviceId/stats  # Get device statistics
 
-GET    /analytics/fleets/:fleetId          # Get fleet analytics summary
-GET    /analytics/fleets/:fleetId/playback # Fleet playback stats
-GET    /analytics/fleets/:fleetId/errors   # Fleet error report
-GET    /analytics/fleets/:fleetId/health   # Fleet health overview
+
 GET    /analytics/fleets/:fleetId/events   # All events from fleet devices
 
 GET    /analytics/summary                  # Global analytics summary
@@ -388,7 +390,7 @@ Custom test runner using Bun (not Jest):
 - Tests both happy paths and error cases
 - Covers command delivery, fleet operations, timeout handling, analytics ingestion
 
-**Test Coverage (18 tests):**
+**Test Coverage (14 tests):**
 - Command: send/receive/acknowledge, offline handling, timeouts
 - Fleet: CRUD operations, 404 handling
 - Analytics: batch upload (gRPC), batch validation, HTTP endpoints, fleet aggregation
