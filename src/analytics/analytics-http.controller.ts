@@ -8,6 +8,7 @@ import {
   HttpException,
   HttpStatus,
   HttpCode,
+  Logger,
 } from '@nestjs/common';
 import * as cbor from 'cbor';
 import { AnalyticsStoreService } from './services/analytics-store.service';
@@ -17,6 +18,8 @@ import { EventType, ConnectionQuality } from '../generated/analytics/v1/analytic
 
 @Controller('analytics')
 export class AnalyticsHttpController {
+  private readonly logger = new Logger(AnalyticsHttpController.name);
+
   private safeDate(timestampMs: number | undefined | null): string {
     if (!timestampMs || typeof timestampMs !== 'number' || isNaN(timestampMs)) {
       return new Date().toISOString();
@@ -70,8 +73,12 @@ export class AnalyticsHttpController {
   ) {
     const deviceFingerprint = parseInt(deviceFingerprintStr, 10);
     if (isNaN(deviceFingerprint)) {
+      this.logger.warn(`Invalid device fingerprint received: ${deviceFingerprintStr}`);
       throw new HttpException('Invalid device fingerprint', HttpStatus.BAD_REQUEST);
     }
+
+    const eventCount = body.events?.length ?? 0;
+    this.logger.log(`HTTP ingest request from device ${deviceFingerprint} with ${eventCount} events`);
 
     // Generate batch ID
     const batchId = Buffer.from(this.generateUuid());
@@ -118,8 +125,13 @@ export class AnalyticsHttpController {
           network,
         });
       } catch (error) {
+        this.logger.warn(`Failed to process event ${eventData.event_id}: ${error}`);
         rejectedEvents.push(eventData.event_id);
       }
+    }
+
+    if (rejectedEvents.length > 0) {
+      this.logger.warn(`Rejected ${rejectedEvents.length} events due to validation errors`);
     }
 
     // Create batch
@@ -139,6 +151,8 @@ export class AnalyticsHttpController {
 
     // Process batch
     const result = this.analyticsService.ingest(batch);
+
+    this.logger.log(`HTTP ingest completed for device ${deviceFingerprint}: accepted=${result.accepted}, stored=${events.length}, rejected=${rejectedEvents.length}`);
 
     return {
       accepted: result.accepted,
@@ -162,6 +176,7 @@ export class AnalyticsHttpController {
    */
   @Get('policy')
   getPolicy() {
+    this.logger.debug('Policy requested');
     const policy = this.analyticsService.getPolicy();
     return {
       min_quality: policy.minQuality,
@@ -192,6 +207,8 @@ export class AnalyticsHttpController {
     const endTimeMs = toTimestamp ? parseInt(toTimestamp, 10) : undefined;
     const limit = parseInt(limitStr || '100', 10);
 
+    this.logger.debug(`Querying events: device=${deviceFingerprint}, type=${typeStr}, limit=${limit}`);
+
     let events = this.analyticsStore.getAllEvents({
       deviceFingerprint,
       type,
@@ -200,6 +217,8 @@ export class AnalyticsHttpController {
     });
 
     events = events.slice(0, limit);
+
+    this.logger.debug(`Found ${events.length} events matching query`);
 
     return {
       total: events.length,
@@ -221,10 +240,13 @@ export class AnalyticsHttpController {
    */
   @Get('events/:eventId')
   getEvent(@Param('eventId') eventId: string) {
+    this.logger.debug(`Looking up event: ${eventId}`);
     const event = this.analyticsStore.getEvent(eventId);
     if (!event) {
+      this.logger.warn(`Event not found: ${eventId}`);
       throw new HttpException('Event not found', HttpStatus.NOT_FOUND);
     }
+    this.logger.debug(`Found event: ${eventId}`)
 
     return {
       eventId: event.eventId,
@@ -254,8 +276,11 @@ export class AnalyticsHttpController {
   ) {
     const deviceFingerprint = parseInt(deviceFingerprintStr, 10);
     if (isNaN(deviceFingerprint)) {
+      this.logger.warn(`Invalid device fingerprint for events query: ${deviceFingerprintStr}`);
       throw new HttpException('Invalid device fingerprint', HttpStatus.BAD_REQUEST);
     }
+
+    this.logger.debug(`Getting events for device ${deviceFingerprint}, type=${typeStr}`);
 
     const type = typeStr ? this.parseEventType(typeStr) : undefined;
     let events = this.analyticsStore.getEventsForDevice(deviceFingerprint);
@@ -266,6 +291,8 @@ export class AnalyticsHttpController {
 
     const limit = parseInt(limitStr || '100', 10);
     events = events.slice(0, limit);
+
+    this.logger.debug(`Returning ${events.length} events for device ${deviceFingerprint}`);
 
     return {
       deviceFingerprint,
@@ -287,14 +314,20 @@ export class AnalyticsHttpController {
   getDeviceSummary(@Param('deviceFingerprint') deviceFingerprintStr: string) {
     const deviceFingerprint = parseInt(deviceFingerprintStr, 10);
     if (isNaN(deviceFingerprint)) {
+      this.logger.warn(`Invalid device fingerprint for summary: ${deviceFingerprintStr}`);
       throw new HttpException('Invalid device fingerprint', HttpStatus.BAD_REQUEST);
     }
+
+    this.logger.debug(`Getting summary for device ${deviceFingerprint}`);
 
     const analytics = this.analyticsStore.getDeviceAnalytics(deviceFingerprint);
 
     if (!analytics) {
+      this.logger.warn(`No analytics found for device ${deviceFingerprint}`);
       throw new HttpException('No analytics data found for device', HttpStatus.NOT_FOUND);
     }
+
+    this.logger.debug(`Found summary for device ${deviceFingerprint}: ${analytics.totalEvents} events`)
 
     return {
       deviceFingerprint: analytics.deviceFingerprint,
@@ -312,6 +345,8 @@ export class AnalyticsHttpController {
    */
   @Get('devices')
   getDevicesWithAnalytics() {
+    this.logger.debug('Getting list of devices with analytics');
+
     const fingerprints = this.analyticsStore.getDeviceFingerprints();
     const devices = fingerprints.map((fingerprint) => {
       const analytics = this.analyticsStore.getDeviceAnalytics(fingerprint);
@@ -347,8 +382,12 @@ export class AnalyticsHttpController {
    */
   @Get('summary')
   getGlobalSummary() {
+    this.logger.debug('Getting global analytics summary');
+
     const deviceFingerprints = this.analyticsStore.getDeviceFingerprints();
     const totalEvents = this.analyticsStore.getEventCount();
+
+    this.logger.debug(`Global summary: ${deviceFingerprints.length} devices, ${totalEvents} events`);
 
     return {
       totalDevices: deviceFingerprints.length,
@@ -363,6 +402,8 @@ export class AnalyticsHttpController {
    */
   @Get('stats')
   getGlobalStats() {
+    this.logger.debug('Getting global event stats');
+
     const events = this.analyticsStore.getAllEvents();
     const stats = {
       ERROR: 0,
@@ -377,6 +418,8 @@ export class AnalyticsHttpController {
       const typeStr = this.analyticsService.getEventTypeString(event.type);
       stats[typeStr as keyof typeof stats]++;
     }
+
+    this.logger.debug(`Global stats: ${events.length} total events`);
 
     return {
       totalEvents: events.length,
