@@ -12,6 +12,8 @@
     "start:debug": "nest start --debug --watch",
     "start:prod": "bun run dist/main",
     "test": "bun run test/e2e.ts",
+    "test:device-server": "bun run test/device-server.e2e.ts",
+    "test:all": "bun run test/e2e.ts && bun run test/device-server.e2e.ts",
     "test:unit": "jest",
     "proto:generate": "bash ./proto.sh"
   },

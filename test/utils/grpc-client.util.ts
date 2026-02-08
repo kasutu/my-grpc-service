@@ -250,27 +250,53 @@ export class GrpcTestClient {
     deliveryId: string,
     status: string = "ACKNOWLEDGE_STATUS_COMPLETED",
     message: string = "",
+    progress?: {
+      percentComplete: number;
+      totalMediaCount: number;
+      completedMediaCount: number;
+      failedMediaCount: number;
+      mediaStatus?: Array<{
+        mediaId: string;
+        state: string;
+        errorCode?: string;
+        errorMessage?: string;
+      }>;
+    },
   ): Promise<any> {
     if (!this.contentClient) {
       throw new Error("Content client not connected");
     }
 
+    const request: any = {
+      device_id: deviceId,
+      delivery_id: deliveryId,
+      status: status,
+      message: message,
+    };
+
+    if (progress) {
+      request.progress = {
+        percent_complete: progress.percentComplete,
+        total_media_count: progress.totalMediaCount,
+        completed_media_count: progress.completedMediaCount,
+        failed_media_count: progress.failedMediaCount,
+        media_status: progress.mediaStatus?.map((m) => ({
+          media_id: m.mediaId,
+          state: m.state,
+          error_code: m.errorCode || "",
+          error_message: m.errorMessage || "",
+        })),
+      };
+    }
+
     return new Promise((resolve, reject) => {
-      this.contentClient!.acknowledge(
-        {
-          device_id: deviceId,
-          delivery_id: deliveryId,
-          status: status,
-          message: message,
-        } as any,
-        (err, response) => {
-          if (err) {
-            reject(err);
-          } else {
-            resolve(response);
-          }
-        },
-      );
+      this.contentClient!.acknowledge(request, (err, response) => {
+        if (err) {
+          reject(err);
+        } else {
+          resolve(response);
+        }
+      });
     });
   }
 

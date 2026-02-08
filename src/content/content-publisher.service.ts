@@ -73,6 +73,8 @@ export class ContentPublisherService implements OnModuleDestroy {
 
   /**
    * Handle acknowledgment from device
+   * Only resolves pending ACKs for final statuses (COMPLETED, PARTIAL, FAILED)
+   * Intermediate statuses (RECEIVED, IN_PROGRESS) are logged but don't resolve
    */
   acknowledge(
     deviceId: string,
@@ -81,15 +83,29 @@ export class ContentPublisherService implements OnModuleDestroy {
     message?: string,
     progress?: ContentProgress,
   ) {
-    // Map status to success boolean
+    // Check if this is a final status
+    const finalStatuses = [
+      AcknowledgeStatus.ACKNOWLEDGE_STATUS_COMPLETED,
+      AcknowledgeStatus.ACKNOWLEDGE_STATUS_PARTIAL,
+      AcknowledgeStatus.ACKNOWLEDGE_STATUS_FAILED,
+    ];
+    const isFinal = finalStatuses.includes(status);
+
+    // Map status to success boolean (only COMPLETED is full success)
     const success = status === AcknowledgeStatus.ACKNOWLEDGE_STATUS_COMPLETED;
 
-    console.log(
-      `✅ Ack from ${deviceId} for ${deliveryId}: ${success ? "success" : "failed"} (status: ${status})`,
-    );
+    if (isFinal) {
+      console.log(
+        `✅ Final ack from ${deviceId} for ${deliveryId}: ${success ? "success" : "failed"} (status: ${status})`,
+      );
+    } else {
+      console.log(
+        `⏳ Progress from ${deviceId} for ${deliveryId}: ${AcknowledgeStatus[status]} (status: ${status})`,
+      );
+    }
 
-    if (!success && message) {
-      console.error(`   Error: ${message}`);
+    if (message) {
+      console.log(`   Message: ${message}`);
     }
 
     if (progress) {
@@ -98,21 +114,23 @@ export class ContentPublisherService implements OnModuleDestroy {
       );
     }
 
-    // Resolve pending ACK if exists
-    const devicePending = this.pendingAcks.get(deviceId);
-    if (devicePending) {
-      const pending = devicePending.get(deliveryId);
-      if (pending) {
-        pending.resolve({
-          success,
-          deliveryId,
-          deviceId,
-          errorMessage: message,
-          timedOut: false,
-        });
-        devicePending.delete(deliveryId);
-        if (devicePending.size === 0) {
-          this.pendingAcks.delete(deviceId);
+    // Only resolve pending ACK for final statuses
+    if (isFinal) {
+      const devicePending = this.pendingAcks.get(deviceId);
+      if (devicePending) {
+        const pending = devicePending.get(deliveryId);
+        if (pending) {
+          pending.resolve({
+            success,
+            deliveryId,
+            deviceId,
+            errorMessage: message,
+            timedOut: false,
+          });
+          devicePending.delete(deliveryId);
+          if (devicePending.size === 0) {
+            this.pendingAcks.delete(deviceId);
+          }
         }
       }
     }

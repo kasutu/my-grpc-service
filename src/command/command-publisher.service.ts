@@ -78,20 +78,40 @@ export class CommandPublisherService implements OnModuleDestroy {
     }
   }
 
+  /**
+   * Handle command acknowledgment from device
+   * Only resolves pending ACKs for final statuses (COMPLETED, FAILED, REJECTED)
+   * RECEIVED status is logged but doesn't resolve (command still executing)
+   */
   acknowledge(
     deviceId: string,
     commandId: string,
     status: AcknowledgeStatus,
     message?: string,
   ) {
+    // Check if this is a final status
+    const finalStatuses = [
+      AcknowledgeStatus.ACKNOWLEDGE_STATUS_COMPLETED,
+      AcknowledgeStatus.ACKNOWLEDGE_STATUS_FAILED,
+      AcknowledgeStatus.ACKNOWLEDGE_STATUS_REJECTED,
+    ];
+    const isFinal = finalStatuses.includes(status);
+
     // Map status enum to boolean success
     const success = status === AcknowledgeStatus.ACKNOWLEDGE_STATUS_COMPLETED;
 
-    console.log(
-      `✅ Command ack from ${deviceId} for ${commandId}: ${success ? "success" : "failed"}`,
-    );
-    if (!success && message) {
-      console.error(`   Error: ${message}`);
+    if (isFinal) {
+      console.log(
+        `✅ Final command ack from ${deviceId} for ${commandId}: ${success ? "success" : "failed"} (status: ${status})`,
+      );
+    } else {
+      console.log(
+        `⏳ Command received from ${deviceId} for ${commandId}: ${AcknowledgeStatus[status]} (executing...)`,
+      );
+    }
+
+    if (message) {
+      console.log(`   Message: ${message}`);
     }
 
     // Update last activity
@@ -100,21 +120,23 @@ export class CommandPublisherService implements OnModuleDestroy {
       info.lastActivity = new Date();
     }
 
-    // Resolve pending ACK if exists
-    const devicePending = this.pendingAcks.get(deviceId);
-    if (devicePending) {
-      const pending = devicePending.get(commandId);
-      if (pending) {
-        pending.resolve({
-          success,
-          commandId,
-          deviceId,
-          errorMessage: message,
-          timedOut: false,
-        });
-        devicePending.delete(commandId);
-        if (devicePending.size === 0) {
-          this.pendingAcks.delete(deviceId);
+    // Only resolve pending ACK for final statuses
+    if (isFinal) {
+      const devicePending = this.pendingAcks.get(deviceId);
+      if (devicePending) {
+        const pending = devicePending.get(commandId);
+        if (pending) {
+          pending.resolve({
+            success,
+            commandId,
+            deviceId,
+            errorMessage: message,
+            timedOut: false,
+          });
+          devicePending.delete(commandId);
+          if (devicePending.size === 0) {
+            this.pendingAcks.delete(deviceId);
+          }
         }
       }
     }
