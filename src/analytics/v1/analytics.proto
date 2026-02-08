@@ -1,106 +1,203 @@
 // Copyright (c) Localize Technologies, Inc. All rights reserved.
 
-// Analytics v2 Service - Minimal envelope + CBOR payload
-// Designed for minimal payload size in challenging network environments
+// Minimal analytics proto for challenging network environments
+// - Tiny envelope with binary-efficient fields
+// - Flexible payload (CBOR/MsgPack) for loose coupling
+// - Fire-and-forget SDK behavior
 
 syntax = "proto3";
 
 package analytics.v1;
 
-// Analytics service - client reports events to server
+// ============================================================================
+// Service - Minimal surface area
+// ============================================================================
+
 service AnalyticsService {
   // Fire-and-forget batch upload (primary method)
+  // Server acknowledges receipt; client doesn't block on response
   rpc Ingest(Batch) returns (Ack);
   
-  // Optional: long-lived stream for real-time
+  // Long-lived stream for real-time scenarios (optional)
+  // Bidirectional allows server backpressure signals
   rpc Stream(stream Event) returns (stream Ack);
+  
+  // Get current upload policy (called on startup/periodically)
+  rpc GetPolicy(PolicyRequest) returns (Policy);
 }
 
 // ============================================================================
-// Event Envelope
+// Event - Minimal envelope, flexible payload
 // ============================================================================
 
-// Event = Tiny envelope + payload bytes
 message Event {
-  bytes event_id = 1;           // 16-byte UUID (binary)
-  fixed64 timestamp_ms = 2;     // 8 bytes fixed
-  EventType type = 3;           // Enum = 1 byte varint
-  fixed32 schema_version = 4;   // 0x00MMmmPP = major.minor.patch
-  bytes payload = 5;            // CBOR/MsgPack/JSON encoded data
-  NetworkContext network = 6;   // Optional: network at event time
+  // 16-byte UUID (binary) - smaller than 36-char string
+  bytes event_id = 1;
+  
+  // Milliseconds since epoch (8 bytes fixed) - smaller than int64 varint for recent times
+  fixed64 timestamp_ms = 2;
+  
+  // Event type for server routing
+  EventType type = 3;
+  
+  // Schema version as packed integer: 0x00MMmmPP = major.minor.patch
+  // e.g., 0x00020000 = v2.0.0, 0x00020001 = v2.0.1
+  fixed32 schema_version = 4;
+  
+  // Flexible payload: CBOR (preferred), MsgPack, or compressed JSON
+  // Client and server agree on encoding via schema_version
+  bytes payload = 5;
+  
+  // Optional: network context at event creation (not upload)
+  NetworkContext network = 6;
 }
 
-// Event types for routing
 enum EventType {
   EVENT_TYPE_UNSPECIFIED = 0;
-  ERROR = 1;         // Urgent - upload on FAIR+ connections
-  IMPRESSION = 2;    // Normal - upload on GOOD+ connections
-  HEARTBEAT = 3;     // Background - EXCELLENT only
-  PERFORMANCE = 4;   // Background - EXCELLENT only
-  LIFECYCLE = 5;     // Normal - upload on GOOD+ connections
+  IMPRESSION = 1;      // Campaign/media playback
+  ERROR = 2;           // Application errors
+  HEARTBEAT = 3;       // Keepalive signal
+  LIFECYCLE = 4;       // App start/pause/resume/stop
+  PERFORMANCE = 5;     // Frame drops, memory, thermal
+  HEALTH = 6;          // Device health metrics
+  CUSTOM = 100;        // Custom events (user-defined)
 }
 
 // ============================================================================
-// Batching
+// Batching - Amortize network cost
 // ============================================================================
 
 message Batch {
-  bytes batch_id = 1;               // 16-byte UUID
-  repeated Event events = 2;        // Multiple events
-  fixed32 device_fingerprint = 3;   // 4-byte hash vs string
-  QueueStatus queue = 4;            // Backpressure signal
-  fixed64 sent_at_ms = 5;           // Batch creation time
+  // 16-byte UUID
+  bytes batch_id = 1;
+  
+  // Multiple events in one network call
+  repeated Event events = 2;
+  
+  // Device fingerprint (hash of stable identifiers) - 4 bytes vs string
+  fixed32 device_fingerprint = 3;
+  
+  // Client queue status for backpressure signaling
+  QueueStatus queue = 4;
+  
+  // Client timestamp of batch creation
+  fixed64 sent_at_ms = 5;
 }
 
-// Status of the client's local event queue
 message QueueStatus {
-  // Number of events waiting to be sent
-  int32 pending_events = 1;
+  // Pending events waiting to be sent
+  uint32 pending_count = 1;
   
-  // Age of oldest pending event (hours)
-  int32 oldest_event_age_hours = 2;
+  // Age of oldest pending event (minutes)
+  uint32 oldest_pending_minutes = 2;
   
-  // True if queue is growing faster than draining
-  bool is_backpressure = 3;
+  // True if queue growing faster than draining
+  bool is_backpressured = 3;
+  
+  // Storage used by queue (KB) - for client storage pressure
+  uint32 storage_kb = 4;
 }
 
 // ============================================================================
-// Network Context
+// Network Context - Lightweight snapshot
 // ============================================================================
 
 message NetworkContext {
   ConnectionQuality quality = 1;
-  double download_mbps = 2;
-  double upload_mbps = 3;
-  string connection_type = 4;      // wifi, ethernet, cellular, unknown
-  int32 signal_strength_dbm = 5;   // For wifi/cellular
+  
+  // Connection type encoded as small integer
+  ConnectionType connection_type = 2;
+  
+  // Signal strength: -100 to 0 dBm, or 127 if unknown
+  sint32 signal_dbm = 3;
+  
+  // Last measured speeds (0 if unknown)
+  float download_mbps = 4;
+  float upload_mbps = 5;
 }
 
-// Connection quality levels
 enum ConnectionQuality {
   CONNECTION_QUALITY_UNSPECIFIED = 0;
-  OFFLINE = 1;       // No upload
-  POOR = 2;          // < 1 Mbps, errors only
-  FAIR = 3;          // 1-5 Mbps, urgent only
-  GOOD = 4;          // 5-20 Mbps, normal uploads
-  EXCELLENT = 5;     // > 20 Mbps, all events
+  OFFLINE = 1;
+  POOR = 2;        // < 1 Mbps, high latency
+  FAIR = 3;        // 1-5 Mbps
+  GOOD = 4;        // 5-20 Mbps
+  EXCELLENT = 5;   // > 20 Mbps
+}
+
+enum ConnectionType {
+  CONNECTION_TYPE_UNSPECIFIED = 0;
+  WIFI = 1;
+  ETHERNET = 2;
+  CELLULAR_4G = 3;
+  CELLULAR_5G = 4;
+  CELLULAR_3G = 5;
+  CELLULAR_2G = 6;
+  UNKNOWN = 7;
 }
 
 // ============================================================================
-// Server Response
+// Server Responses - Minimal but actionable
 // ============================================================================
 
 message Ack {
+  // Echo batch_id for correlation
   bytes batch_id = 1;
+  
+  // Accepted = stored durably (may still be processing)
   bool accepted = 2;
-  repeated bytes rejected_event_ids = 3;  // 16-byte UUIDs
-  uint32 throttle_ms = 4;     // Server backpressure
-  Policy policy = 5;          // Updated policy (optional)
+  
+  // Event IDs that failed validation (rare, payload corruption/schema mismatch)
+  repeated bytes rejected_event_ids = 3;
+  
+  // Server-recommended throttle (ms before next upload)
+  // 0 = no throttle, client decides
+  uint32 throttle_ms = 4;
+  
+  // Updated policy (if server wants to change client behavior)
+  Policy policy = 5;
+}
+
+message PolicyRequest {
+  fixed32 device_fingerprint = 1;
+  string sdk_version = 2;       // For feature detection
+  uint32 max_payload_bytes = 3; // Client's max acceptable payload size
 }
 
 message Policy {
-  ConnectionQuality min_quality = 1;   // Minimum quality for uploads
-  int32 max_batch_size = 2;            // Max events per batch
-  int32 max_queue_age_hours = 3;       // Force upload if older
-  int32 upload_interval_seconds = 4;   // Suggested upload interval
+  // Batch sizing
+  uint32 max_events_per_batch = 1;
+  uint32 max_payload_bytes = 2;       // Max payload size server accepts
+  
+  // Timing
+  uint32 upload_interval_seconds = 3; // Normal cadence
+  uint32 urgent_interval_seconds = 4; // For errors/critical events
+  
+  // Quality thresholds
+  ConnectionQuality min_quality_for_regular = 5;
+  ConnectionQuality min_quality_for_urgent = 6;
+  
+  // Encoding preferences
+  PayloadEncoding preferred_encoding = 7;
+  CompressionAlgorithm compression = 8;
+  
+  // Circuit breaker
+  uint32 circuit_open_seconds = 9;    // Stop sending for N seconds after errors
 }
+
+enum PayloadEncoding {
+  PAYLOAD_ENCODING_UNSPECIFIED = 0;
+  CBOR = 1;           // Preferred: compact, typed, IETF standard
+  MSGPACK = 2;        // Alternative: widely supported
+  JSON = 3;           // Fallback: human-readable, larger
+}
+
+enum CompressionAlgorithm {
+  COMPRESSION_UNSPECIFIED = 0;
+  NONE = 1;
+  GZIP = 2;
+  ZSTD = 3;           // Preferred for speed/ratio tradeoff
+}
+
+// Empty message for stream close
+message Close {}

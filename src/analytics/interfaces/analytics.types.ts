@@ -3,6 +3,7 @@
 import type {
   EventType,
   ConnectionQuality,
+  ConnectionType,
 } from "../../generated/analytics/v1/analytics";
 
 export type { EventType, ConnectionQuality };
@@ -34,8 +35,8 @@ export interface NetworkContext {
   quality: ConnectionQuality;
   downloadMbps?: number;
   uploadMbps?: number;
-  connectionType?: string;
-  signalStrengthDbm?: number;
+  connectionType?: ConnectionType;
+  signalDbm?: number;
 }
 
 /** Device analytics summary */
@@ -58,17 +59,23 @@ export interface FleetAnalytics {
 
 /** Upload policy from server - using local enum for values */
 export interface Policy {
-  minQuality: ConnectionQuality;
-  maxBatchSize: number;
-  maxQueueAgeHours: number;
+  maxEventsPerBatch: number;
+  maxPayloadBytes: number;
   uploadIntervalSeconds: number;
+  urgentIntervalSeconds: number;
+  minQualityForRegular: ConnectionQuality;
+  minQualityForUrgent: ConnectionQuality;
+  preferredEncoding: number; // PayloadEncoding enum
+  compression: number; // CompressionAlgorithm enum
+  circuitOpenSeconds: number;
 }
 
 /** Queue status from client */
 export interface QueueStatus {
-  pendingEvents: number;
-  oldestEventAgeHours: number;
-  isBackpressure: boolean;
+  pendingCount: number;
+  oldestPendingMinutes: number;
+  isBackpressured: boolean;
+  storageKb: number;
 }
 
 /** CBOR payload schema versions */

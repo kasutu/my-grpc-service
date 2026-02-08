@@ -7,7 +7,12 @@ import type {
   Event,
   Policy,
 } from "../generated/analytics/v1/analytics";
-import { ConnectionQuality } from "../generated/analytics/v1/analytics";
+import {
+  ConnectionQuality,
+  ConnectionType,
+  PayloadEncoding,
+  CompressionAlgorithm,
+} from "../generated/analytics/v1/analytics";
 
 @Injectable()
 export class AnalyticsService {
@@ -15,10 +20,15 @@ export class AnalyticsService {
 
   // Default server-side policy
   private readonly defaultPolicy: Policy = {
-    minQuality: ConnectionQuality.FAIR as number,
-    maxBatchSize: 100,
-    maxQueueAgeHours: 24,
+    maxEventsPerBatch: 100,
+    maxPayloadBytes: 1048576, // 1MB
     uploadIntervalSeconds: 300, // 5 minutes
+    urgentIntervalSeconds: 30,
+    minQualityForRegular: ConnectionQuality.FAIR,
+    minQualityForUrgent: ConnectionQuality.POOR,
+    preferredEncoding: PayloadEncoding.CBOR,
+    compression: CompressionAlgorithm.GZIP,
+    circuitOpenSeconds: 60,
   };
 
   constructor(private readonly store: AnalyticsStoreService) {}
@@ -59,12 +69,12 @@ export class AnalyticsService {
     }
 
     // Validate batch size
-    if (batch.events.length > this.defaultPolicy.maxBatchSize) {
+    if (batch.events.length > this.defaultPolicy.maxEventsPerBatch) {
       return this.createAck(
         batch.batchId,
         false,
         [],
-        `Batch size exceeds maximum (${batch.events.length} > ${this.defaultPolicy.maxBatchSize})`,
+        `Batch size exceeds maximum (${batch.events.length} > ${this.defaultPolicy.maxEventsPerBatch})`,
       );
     }
 
@@ -87,8 +97,8 @@ export class AnalyticsService {
         quality: number;
         downloadMbps?: number;
         uploadMbps?: number;
-        connectionType?: string;
-        signalStrengthDbm?: number;
+        connectionType?: number;
+        signalDbm?: number;
       };
     }> = [];
 
@@ -148,8 +158,8 @@ export class AnalyticsService {
       quality: number;
       downloadMbps?: number;
       uploadMbps?: number;
-      connectionType?: string;
-      signalStrengthDbm?: number;
+      connectionType?: number;
+      signalDbm?: number;
     };
   } | null {
     // Validate eventId (should be 16 bytes)
@@ -189,7 +199,7 @@ export class AnalyticsService {
             downloadMbps: event.network.downloadMbps,
             uploadMbps: event.network.uploadMbps,
             connectionType: event.network.connectionType,
-            signalStrengthDbm: event.network.signalStrengthDbm,
+            signalDbm: event.network.signalDbm,
           }
         : undefined,
     };

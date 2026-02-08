@@ -14,7 +14,7 @@ import * as cbor from 'cbor';
 import { AnalyticsStoreService } from './services/analytics-store.service';
 import { AnalyticsService } from './analytics.service';
 import type { Batch, Event } from '../generated/analytics/v1/analytics';
-import { EventType, ConnectionQuality } from '../generated/analytics/v1/analytics';
+import { EventType, ConnectionQuality, ConnectionType } from '../generated/analytics/v1/analytics';
 
 @Controller('analytics')
 export class AnalyticsHttpController {
@@ -111,8 +111,8 @@ export class AnalyticsHttpController {
               quality: this.parseConnectionQuality(eventData.network.quality),
               downloadMbps: eventData.network.download_mbps ?? 0,
               uploadMbps: eventData.network.upload_mbps ?? 0,
-              connectionType: eventData.network.connection_type ?? '',
-              signalStrengthDbm: eventData.network.signal_strength_dbm ?? 0,
+              connectionType: this.parseConnectionType(eventData.network.connection_type),
+              signalDbm: eventData.network.signal_strength_dbm ?? 0,
             }
           : undefined;
 
@@ -141,9 +141,10 @@ export class AnalyticsHttpController {
       deviceFingerprint,
       queue: body.queue
         ? {
-            pendingEvents: body.queue.pending_events ?? 0,
-            oldestEventAgeHours: body.queue.oldest_event_age_hours ?? 0,
-            isBackpressure: body.queue.is_backpressure ?? false,
+            pendingCount: body.queue.pending_events ?? 0,
+            oldestPendingMinutes: (body.queue.oldest_event_age_hours ?? 0) * 60,
+            isBackpressured: body.queue.is_backpressure ?? false,
+            storageKb: 0,
           }
         : undefined,
       sentAtMs: Date.now(),
@@ -162,9 +163,9 @@ export class AnalyticsHttpController {
       rejected_event_ids: rejectedEvents,
       policy: result.policy
         ? {
-            min_quality: result.policy.minQuality,
-            max_batch_size: result.policy.maxBatchSize,
-            max_queue_age_hours: result.policy.maxQueueAgeHours,
+            min_quality_for_regular: result.policy.minQualityForRegular,
+            min_quality_for_urgent: result.policy.minQualityForUrgent,
+            max_events_per_batch: result.policy.maxEventsPerBatch,
             upload_interval_seconds: result.policy.uploadIntervalSeconds,
           }
         : undefined,
@@ -179,9 +180,9 @@ export class AnalyticsHttpController {
     this.logger.debug('Policy requested');
     const policy = this.analyticsService.getPolicy();
     return {
-      min_quality: policy.minQuality,
-      max_batch_size: policy.maxBatchSize,
-      max_queue_age_hours: policy.maxQueueAgeHours,
+      min_quality_for_regular: policy.minQualityForRegular,
+      min_quality_for_urgent: policy.minQualityForUrgent,
+      max_events_per_batch: policy.maxEventsPerBatch,
       upload_interval_seconds: policy.uploadIntervalSeconds,
     };
   }
@@ -459,6 +460,23 @@ export class AnalyticsHttpController {
       EXCELLENT: ConnectionQuality.EXCELLENT,
     };
     return map[quality?.toUpperCase()] ?? ConnectionQuality.CONNECTION_QUALITY_UNSPECIFIED;
+  }
+
+  /**
+   * Parse connection type string to enum
+   */
+  private parseConnectionType(type: string | undefined): ConnectionType {
+    const map: Record<string, ConnectionType> = {
+      UNSPECIFIED: ConnectionType.CONNECTION_TYPE_UNSPECIFIED,
+      WIFI: ConnectionType.WIFI,
+      ETHERNET: ConnectionType.ETHERNET,
+      CELLULAR_4G: ConnectionType.CELLULAR_4G,
+      CELLULAR_5G: ConnectionType.CELLULAR_5G,
+      CELLULAR_3G: ConnectionType.CELLULAR_3G,
+      CELLULAR_2G: ConnectionType.CELLULAR_2G,
+      UNKNOWN: ConnectionType.UNKNOWN,
+    };
+    return map[type?.toUpperCase() ?? ''] ?? ConnectionType.CONNECTION_TYPE_UNSPECIFIED;
   }
 
   /**

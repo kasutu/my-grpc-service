@@ -2,6 +2,7 @@ import { Injectable, OnModuleDestroy } from "@nestjs/common";
 import { Subject, firstValueFrom, race, timer } from "rxjs";
 import { map, take } from "rxjs/operators";
 import type { CommandPackage } from "src/generated/command/v1/command";
+import { AcknowledgeStatus } from "src/generated/command/v1/command";
 
 export interface AckResult {
   success: boolean;
@@ -80,14 +81,17 @@ export class CommandPublisherService implements OnModuleDestroy {
   acknowledge(
     deviceId: string,
     commandId: string,
-    success: boolean,
-    errorMsg?: string,
+    status: AcknowledgeStatus,
+    message?: string,
   ) {
+    // Map status enum to boolean success
+    const success = status === AcknowledgeStatus.ACKNOWLEDGE_STATUS_COMPLETED;
+
     console.log(
       `✅ Command ack from ${deviceId} for ${commandId}: ${success ? "success" : "failed"}`,
     );
-    if (!success && errorMsg) {
-      console.error(`   Error: ${errorMsg}`);
+    if (!success && message) {
+      console.error(`   Error: ${message}`);
     }
 
     // Update last activity
@@ -105,7 +109,7 @@ export class CommandPublisherService implements OnModuleDestroy {
           success,
           commandId,
           deviceId,
-          errorMessage: errorMsg,
+          errorMessage: message,
           timedOut: false,
         });
         devicePending.delete(commandId);

@@ -8,6 +8,20 @@
 import { GrpcMethod, GrpcStreamMethod } from "@nestjs/microservices";
 import { Observable } from "rxjs";
 
+/** Status of command acknowledgment */
+export enum AcknowledgeStatus {
+  ACKNOWLEDGE_STATUS_UNSPECIFIED = 0,
+  /** ACKNOWLEDGE_STATUS_RECEIVED - Command received, executing */
+  ACKNOWLEDGE_STATUS_RECEIVED = 1,
+  /** ACKNOWLEDGE_STATUS_COMPLETED - Executed successfully */
+  ACKNOWLEDGE_STATUS_COMPLETED = 2,
+  /** ACKNOWLEDGE_STATUS_FAILED - Execution failed */
+  ACKNOWLEDGE_STATUS_FAILED = 3,
+  /** ACKNOWLEDGE_STATUS_REJECTED - Command rejected (invalid, unsupported) */
+  ACKNOWLEDGE_STATUS_REJECTED = 4,
+  UNRECOGNIZED = -1,
+}
+
 export interface SubscribeRequest {
   deviceId: string;
 }
@@ -18,7 +32,6 @@ export interface CommandPackage {
   setClock?: SetClockOverride | undefined;
   requestReboot?: RequestSystemReboot | undefined;
   updateNetwork?: UpdateNetworkConfig | undefined;
-  /** NEW */
   rotateScreen?: RotateScreen | undefined;
   requiresAck: boolean;
   issuedAt: string;
@@ -46,58 +59,48 @@ export interface UpdateNetworkConfig {
   newPassword: string;
 }
 
-export interface AckRequest {
+/** Request to acknowledge command execution */
+export interface AcknowledgeRequest {
   deviceId: string;
   commandId: string;
-  processedSuccessfully: boolean;
-  errorMessage: string;
+  status: AcknowledgeStatus;
+  /** Human-readable status or error details */
+  message: string;
 }
 
-export interface AckResponse {
+export interface AcknowledgeResponse {
   accepted: boolean;
+  /** If server wants client to backoff */
+  retryAfterSeconds: number;
 }
 
-export interface RemoteCommandServiceClient {
+export interface CommandServiceClient {
   subscribeCommands(request: SubscribeRequest): Observable<CommandPackage>;
 
-  acknowledgeCommand(request: AckRequest): Observable<AckResponse>;
+  acknowledge(request: AcknowledgeRequest): Observable<AcknowledgeResponse>;
 }
 
-export interface RemoteCommandServiceController {
+export interface CommandServiceController {
   subscribeCommands(request: SubscribeRequest): Observable<CommandPackage>;
 
-  acknowledgeCommand(
-    request: AckRequest,
-  ): Promise<AckResponse> | Observable<AckResponse> | AckResponse;
+  acknowledge(
+    request: AcknowledgeRequest,
+  ): Promise<AcknowledgeResponse> | Observable<AcknowledgeResponse> | AcknowledgeResponse;
 }
 
-export function RemoteCommandServiceControllerMethods() {
+export function CommandServiceControllerMethods() {
   return function (constructor: Function) {
-    const grpcMethods: string[] = ["subscribeCommands", "acknowledgeCommand"];
+    const grpcMethods: string[] = ["subscribeCommands", "acknowledge"];
     for (const method of grpcMethods) {
-      const descriptor: any = Reflect.getOwnPropertyDescriptor(
-        constructor.prototype,
-        method,
-      );
-      GrpcMethod("RemoteCommandService", method)(
-        constructor.prototype[method],
-        method,
-        descriptor,
-      );
+      const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
+      GrpcMethod("CommandService", method)(constructor.prototype[method], method, descriptor);
     }
     const grpcStreamMethods: string[] = [];
     for (const method of grpcStreamMethods) {
-      const descriptor: any = Reflect.getOwnPropertyDescriptor(
-        constructor.prototype,
-        method,
-      );
-      GrpcStreamMethod("RemoteCommandService", method)(
-        constructor.prototype[method],
-        method,
-        descriptor,
-      );
+      const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
+      GrpcStreamMethod("CommandService", method)(constructor.prototype[method], method, descriptor);
     }
   };
 }
 
-export const REMOTE_COMMAND_SERVICE_NAME = "RemoteCommandService";
+export const COMMAND_SERVICE_NAME = "CommandService";

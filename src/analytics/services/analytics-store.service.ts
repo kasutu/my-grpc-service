@@ -33,8 +33,8 @@ export class AnalyticsStoreService {
         quality: number;
         downloadMbps?: number;
         uploadMbps?: number;
-        connectionType?: string;
-        signalStrengthDbm?: number;
+        connectionType?: number;
+        signalDbm?: number;
       };
     }>,
   ): string[] {

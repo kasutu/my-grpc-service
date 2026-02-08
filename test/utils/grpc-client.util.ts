@@ -37,12 +37,12 @@ export interface GrpcCommandClient {
   subscribeCommands(request: {
     deviceId: string;
   }): grpc.ClientReadableStream<any>;
-  acknowledgeCommand(
+  acknowledge(
     request: {
       deviceId: string;
       commandId: string;
-      processedSuccessfully: boolean;
-      errorMessage?: string;
+      status: string;
+      message?: string;
     },
     callback: (err: grpc.ServiceError | null, response: any) => void,
   ): void;
@@ -57,8 +57,8 @@ export interface GrpcContentClient {
     request: {
       deviceId: string;
       deliveryId: string;
-      processedSuccessfully: boolean;
-      errorMessage?: string;
+      status: string;
+      message?: string;
     },
     callback: (err: grpc.ServiceError | null, response: any) => void,
   ): void;
@@ -120,10 +120,10 @@ export class GrpcTestClient {
   connect(): void {
     const address = `localhost:${this.grpcPort}`;
 
-    // Create command client - package remote.v1
-    const RemoteCommandService =
-      this.commandProto.remote.v1.RemoteCommandService;
-    this.commandClient = new RemoteCommandService(
+    // Create command client - package command.v1
+    const CommandService =
+      this.commandProto.command.v1.CommandService;
+    this.commandClient = new CommandService(
       address,
       grpc.credentials.createInsecure(),
     ) as GrpcCommandClient;
@@ -188,20 +188,20 @@ export class GrpcTestClient {
   async acknowledgeCommand(
     deviceId: string,
     commandId: string,
-    processedSuccessfully: boolean = true,
-    errorMessage: string = "",
+    status: string = "ACKNOWLEDGE_STATUS_COMPLETED",
+    message: string = "",
   ): Promise<any> {
     if (!this.commandClient) {
       throw new Error("Command client not connected");
     }
 
     return new Promise((resolve, reject) => {
-      this.commandClient!.acknowledgeCommand(
+      this.commandClient!.acknowledge(
         {
           device_id: deviceId,
           command_id: commandId,
-          processed_successfully: processedSuccessfully,
-          error_message: errorMessage,
+          status: status,
+          message: message,
         } as any,
         (err, response) => {
           if (err) {
@@ -248,8 +248,8 @@ export class GrpcTestClient {
   async acknowledgeContent(
     deviceId: string,
     deliveryId: string,
-    processedSuccessfully: boolean = true,
-    errorMessage: string = "",
+    status: string = "ACKNOWLEDGE_STATUS_COMPLETED",
+    message: string = "",
   ): Promise<any> {
     if (!this.contentClient) {
       throw new Error("Content client not connected");
@@ -260,8 +260,8 @@ export class GrpcTestClient {
         {
           device_id: deviceId,
           delivery_id: deliveryId,
-          processed_successfully: processedSuccessfully,
-          error_message: errorMessage,
+          status: status,
+          message: message,
         } as any,
         (err, response) => {
           if (err) {

@@ -1,10 +1,11 @@
-import type {
-  CommandPackage,
-  SetClockOverride,
-  RequestSystemReboot,
-  UpdateNetworkConfig,
-  RotateScreen,
-  AckRequest,
+import {
+  AcknowledgeStatus,
+  type CommandPackage,
+  type SetClockOverride,
+  type RequestSystemReboot,
+  type UpdateNetworkConfig,
+  type RotateScreen,
+  type AcknowledgeRequest,
 } from "src/generated/command/v1/command";
 
 export class CommandMapper {
@@ -55,12 +56,30 @@ export class CommandMapper {
     };
   }
 
-  static toAckRequest(json: any): AckRequest {
+  static toAcknowledgeRequest(json: any): AcknowledgeRequest {
+    // Map string status to enum
+    let status = AcknowledgeStatus.ACKNOWLEDGE_STATUS_UNSPECIFIED;
+    const statusStr = json.status?.toString().toUpperCase() ?? "";
+    switch (statusStr) {
+      case "RECEIVED":
+        status = AcknowledgeStatus.ACKNOWLEDGE_STATUS_RECEIVED;
+        break;
+      case "COMPLETED":
+        status = AcknowledgeStatus.ACKNOWLEDGE_STATUS_COMPLETED;
+        break;
+      case "FAILED":
+        status = AcknowledgeStatus.ACKNOWLEDGE_STATUS_FAILED;
+        break;
+      case "REJECTED":
+        status = AcknowledgeStatus.ACKNOWLEDGE_STATUS_REJECTED;
+        break;
+    }
+
     return {
       deviceId: json.device_id ?? "",
       commandId: json.command_id?.toString() ?? "",
-      processedSuccessfully: json.processed_successfully ?? false,
-      errorMessage: json.error_message ?? "",
+      status,
+      message: json.message ?? "",
     };
   }
 

@@ -8,6 +8,37 @@
 import { GrpcMethod, GrpcStreamMethod } from "@nestjs/microservices";
 import { Observable } from "rxjs";
 
+/** Status of content acknowledgment */
+export enum AcknowledgeStatus {
+  ACKNOWLEDGE_STATUS_UNSPECIFIED = 0,
+  /** ACKNOWLEDGE_STATUS_RECEIVED - Package received, processing started */
+  ACKNOWLEDGE_STATUS_RECEIVED = 1,
+  /** ACKNOWLEDGE_STATUS_IN_PROGRESS - Downloading/verifying media */
+  ACKNOWLEDGE_STATUS_IN_PROGRESS = 2,
+  /** ACKNOWLEDGE_STATUS_COMPLETED - All media processed successfully */
+  ACKNOWLEDGE_STATUS_COMPLETED = 3,
+  /** ACKNOWLEDGE_STATUS_PARTIAL - Some media succeeded, some failed */
+  ACKNOWLEDGE_STATUS_PARTIAL = 4,
+  /** ACKNOWLEDGE_STATUS_FAILED - Complete failure */
+  ACKNOWLEDGE_STATUS_FAILED = 5,
+  UNRECOGNIZED = -1,
+}
+
+export enum MediaState {
+  MEDIA_STATE_UNSPECIFIED = 0,
+  /** MEDIA_STATE_PENDING - Waiting to download */
+  MEDIA_STATE_PENDING = 1,
+  /** MEDIA_STATE_DOWNLOADING - In progress */
+  MEDIA_STATE_DOWNLOADING = 2,
+  /** MEDIA_STATE_DOWNLOADED - File on disk, verifying */
+  MEDIA_STATE_DOWNLOADED = 3,
+  /** MEDIA_STATE_VERIFIED - Checksum verified */
+  MEDIA_STATE_VERIFIED = 4,
+  /** MEDIA_STATE_FAILED - Download or verification failed */
+  MEDIA_STATE_FAILED = 5,
+  UNRECOGNIZED = -1,
+}
+
 export interface SubscribeRequest {
   deviceId: string;
   /** For resume/reconnect */
@@ -22,16 +53,42 @@ export interface ContentPackage {
   requiresAck: boolean;
 }
 
-export interface AckRequest {
+/** Request to acknowledge content delivery */
+export interface AcknowledgeRequest {
   deviceId: string;
   deliveryId: string;
-  processedSuccessfully: boolean;
-  /** If failed */
+  status: AcknowledgeStatus;
+  /** Human-readable status or error details */
+  message: string;
+  /** Structured progress (optional, for detailed reporting) */
+  progress?: ContentProgress | undefined;
+}
+
+/** Detailed content processing progress */
+export interface ContentProgress {
+  /** 0.0 to 100.0 */
+  percentComplete: number;
+  totalMediaCount: number;
+  completedMediaCount: number;
+  failedMediaCount: number;
+  /** Per-media details */
+  mediaStatus: MediaStatus[];
+}
+
+/** Status of individual media file */
+export interface MediaStatus {
+  mediaId: string;
+  state: MediaState;
+  /** Machine-readable: "DOWNLOAD_FAILED", "CHECKSUM_MISMATCH" */
+  errorCode: string;
+  /** Human-readable details */
   errorMessage: string;
 }
 
-export interface AckResponse {
+export interface AcknowledgeResponse {
   accepted: boolean;
+  /** If server wants client to backoff */
+  retryAfterSeconds: number;
 }
 
 export interface Content {
@@ -72,7 +129,7 @@ export interface ContentServiceClient {
 
   /** Unary call for acknowledgments (simpler than bidirectional) */
 
-  acknowledge(request: AckRequest): Observable<AckResponse>;
+  acknowledge(request: AcknowledgeRequest): Observable<AcknowledgeResponse>;
 }
 
 export interface ContentServiceController {
@@ -83,35 +140,21 @@ export interface ContentServiceController {
   /** Unary call for acknowledgments (simpler than bidirectional) */
 
   acknowledge(
-    request: AckRequest,
-  ): Promise<AckResponse> | Observable<AckResponse> | AckResponse;
+    request: AcknowledgeRequest,
+  ): Promise<AcknowledgeResponse> | Observable<AcknowledgeResponse> | AcknowledgeResponse;
 }
 
 export function ContentServiceControllerMethods() {
   return function (constructor: Function) {
     const grpcMethods: string[] = ["subscribe", "acknowledge"];
     for (const method of grpcMethods) {
-      const descriptor: any = Reflect.getOwnPropertyDescriptor(
-        constructor.prototype,
-        method,
-      );
-      GrpcMethod("ContentService", method)(
-        constructor.prototype[method],
-        method,
-        descriptor,
-      );
+      const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
+      GrpcMethod("ContentService", method)(constructor.prototype[method], method, descriptor);
     }
     const grpcStreamMethods: string[] = [];
     for (const method of grpcStreamMethods) {
-      const descriptor: any = Reflect.getOwnPropertyDescriptor(
-        constructor.prototype,
-        method,
-      );
-      GrpcStreamMethod("ContentService", method)(
-        constructor.prototype[method],
-        method,
-        descriptor,
-      );
+      const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
+      GrpcStreamMethod("ContentService", method)(constructor.prototype[method], method, descriptor);
     }
   };
 }

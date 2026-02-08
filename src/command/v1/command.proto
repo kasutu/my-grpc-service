@@ -1,11 +1,10 @@
 syntax = "proto3";
 
-package remote.v1;
+package command.v1;
 
-
-service RemoteCommandService {
+service CommandService {
   rpc SubscribeCommands(SubscribeRequest) returns (stream CommandPackage);
-  rpc AcknowledgeCommand(AckRequest) returns (AckResponse);
+  rpc Acknowledge(AcknowledgeRequest) returns (AcknowledgeResponse);
 }
 
 message SubscribeRequest {
@@ -20,7 +19,7 @@ message CommandPackage {
     SetClockOverride set_clock = 2;
     RequestSystemReboot request_reboot = 3;
     UpdateNetworkConfig update_network = 4;
-    RotateScreen rotate_screen = 5;  // NEW
+    RotateScreen rotate_screen = 5;
   }
   
   bool requires_ack = 6;
@@ -46,13 +45,24 @@ message UpdateNetworkConfig {
   string new_password = 2;
 }
 
-message AckRequest {
+// Request to acknowledge command execution
+message AcknowledgeRequest {
   string device_id = 1;
   string command_id = 2;
-  bool processed_successfully = 3;
-  string error_message = 4;
+  AcknowledgeStatus status = 3;
+  string message = 4; // Human-readable status or error details
 }
 
-message AckResponse {
+// Status of command acknowledgment
+enum AcknowledgeStatus {
+  ACKNOWLEDGE_STATUS_UNSPECIFIED = 0;
+  ACKNOWLEDGE_STATUS_RECEIVED = 1;        // Command received, executing
+  ACKNOWLEDGE_STATUS_COMPLETED = 2;       // Executed successfully
+  ACKNOWLEDGE_STATUS_FAILED = 3;          // Execution failed
+  ACKNOWLEDGE_STATUS_REJECTED = 4;        // Command rejected (invalid, unsupported)
+}
+
+message AcknowledgeResponse {
   bool accepted = 1;
+  uint32 retry_after_seconds = 2; // If server wants client to backoff
 }

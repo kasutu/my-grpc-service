@@ -30,7 +30,7 @@ async function runTests() {
   app.connectMicroservice({
     transport: 4,
     options: {
-      package: ['remote.v1', 'content.v1', 'analytics.v1'],
+      package: ['command.v1', 'content.v1', 'analytics.v1'],
       protoPath: [
         'src/command/v1/command.proto',
         'src/content/v1/content.proto',
@@ -89,7 +89,7 @@ async function runTests() {
 
       // gRPC message uses snake_case due to keepCase: true in protoLoader
       const commandId = commands[0].command_id;
-      await grpcClient.acknowledgeCommand(deviceId, commandId, true);
+      await grpcClient.acknowledgeCommand(deviceId, commandId, "ACKNOWLEDGE_STATUS_COMPLETED");
 
       const response = await httpPromise;
       if (response.status !== 200) throw new Error(`Expected 200, got ${response.status}`);

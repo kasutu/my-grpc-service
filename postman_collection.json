@@ -1,0 +1,830 @@
+{
+  "info": {
+    "name": "Hydrogen Node API",
+    "description": "NestJS hybrid gRPC/HTTP server for IoT device management. Collection includes all HTTP REST endpoints for content delivery, remote commands, fleet management, and analytics.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_exporter_id": "hydrogen-api"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:31691",
+      "type": "string",
+      "description": "HTTP REST API base URL"
+    },
+    {
+      "key": "grpcHost",
+      "value": "localhost:50051",
+      "type": "string",
+      "description": "gRPC server address"
+    },
+    {
+      "key": "deviceId",
+      "value": "device-001",
+      "type": "string",
+      "description": "Default device ID for testing"
+    },
+    {
+      "key": "deliveryId",
+      "value": "delivery-001",
+      "type": "string",
+      "description": "Content delivery ID"
+    },
+    {
+      "key": "commandId",
+      "value": "cmd-001",
+      "type": "string",
+      "description": "Command ID for acknowledgments"
+    },
+    {
+      "key": "fleetId",
+      "value": "fleet-001",
+      "type": "string",
+      "description": "Fleet ID for fleet operations"
+    },
+    {
+      "key": "deviceFingerprint",
+      "value": "1234567890",
+      "type": "string",
+      "description": "Analytics device fingerprint"
+    },
+    {
+      "key": "eventId",
+      "value": "evt-001",
+      "type": "string",
+      "description": "Analytics event ID"
+    },
+    {
+      "key": "campaignId",
+      "value": "campaign-001",
+      "type": "string",
+      "description": "Campaign ID for content"
+    },
+    {
+      "key": "mediaId",
+      "value": "media-001",
+      "type": "string",
+      "description": "Media ID for content"
+    },
+    {
+      "key": "timeout",
+      "value": "5000",
+      "type": "string",
+      "description": "ACK timeout in milliseconds"
+    }
+  ],
+  "item": [
+    {
+      "name": "Content",
+      "description": "Content delivery endpoints for pushing media packages to devices",
+      "item": [
+        {
+          "name": "Push Content to Device",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/content/push/{{deviceId}}?timeout={{timeout}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["content", "push", "{{deviceId}}"],
+              "query": [
+                {
+                  "key": "timeout",
+                  "value": "{{timeout}}",
+                  "description": "ACK timeout in milliseconds (optional)"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"delivery_id\": \"{{deliveryId}}\",\n  \"content\": {\n    \"id\": 1,\n    \"hmac_signature\": \"abc123\",\n    \"time_slots\": [\n      {\n        \"id\": \"slot-001\",\n        \"start_window\": \"2024-01-01T08:00:00Z\",\n        \"end_window\": \"2024-01-01T20:00:00Z\",\n        \"campaigns\": [\n          {\n            \"id\": \"{{campaignId}}\",\n            \"index\": 0,\n            \"media_id\": \"{{mediaId}}\"\n          }\n        ]\n      }\n    ],\n    \"fallback_media_ref\": {\n      \"media_id\": \"fallback-001\"\n    },\n    \"created_at\": \"2024-01-01T00:00:00Z\"\n  },\n  \"media\": [\n    {\n      \"id\": \"{{mediaId}}\",\n      \"checksum\": \"sha256:abc123\",\n      \"url\": \"https://example.com/media/video1.mp4\"\n    }\n  ],\n  \"requires_ack\": true\n}"
+            },
+            "description": "Push a content package to a specific device. Returns 503 if device not connected, 408 on ACK timeout, 200 on success."
+          }
+        },
+        {
+          "name": "Broadcast Content to All",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/content/broadcast?timeout={{timeout}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["content", "broadcast"],
+              "query": [
+                {
+                  "key": "timeout",
+                  "value": "{{timeout}}",
+                  "description": "ACK timeout in milliseconds (optional)"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"delivery_id\": \"broadcast-{{deliveryId}}\",\n  \"content\": {\n    \"id\": 2,\n    \"hmac_signature\": \"def456\",\n    \"time_slots\": [\n      {\n        \"id\": \"slot-broadcast\",\n        \"start_window\": \"2024-01-01T00:00:00Z\",\n        \"end_window\": \"2024-12-31T23:59:59Z\",\n        \"campaigns\": [\n          {\n            \"id\": \"broadcast-campaign\",\n            \"index\": 0,\n            \"media_id\": \"broadcast-media\"\n          }\n        ]\n      }\n    ],\n    \"fallback_media_ref\": {\n      \"media_id\": \"fallback-broadcast\"\n    },\n    \"created_at\": \"2024-01-01T00:00:00Z\"\n  },\n  \"media\": [\n    {\n      \"id\": \"broadcast-media\",\n      \"checksum\": \"sha256:def456\",\n      \"url\": \"https://example.com/media/broadcast.mp4\"\n    }\n  ],\n  \"requires_ack\": true\n}"
+            },
+            "description": "Broadcast content package to all connected devices. Returns 207 if partially successful."
+          }
+        },
+        {
+          "name": "Get Content Stats",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/content/stats",
+              "host": ["{{baseUrl}}"],
+              "path": ["content", "stats"]
+            },
+            "description": "Get count of connected devices for content delivery."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Commands",
+      "description": "Remote command execution for device control",
+      "item": [
+        {
+          "name": "List Connected Devices",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/commands/devices",
+              "host": ["{{baseUrl}}"],
+              "path": ["commands", "devices"]
+            },
+            "description": "Get list of devices connected for command delivery."
+          }
+        },
+        {
+          "name": "Set Clock Override",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/commands/clock/{{deviceId}}?timeout={{timeout}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["commands", "clock", "{{deviceId}}"],
+              "query": [
+                {
+                  "key": "timeout",
+                  "value": "{{timeout}}",
+                  "description": "ACK timeout in milliseconds (optional)"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"simulated_time\": \"2024-01-01T00:00:00Z\"\n}"
+            },
+            "description": "Set device clock override for testing. Empty string resets to system time."
+          }
+        },
+        {
+          "name": "Request System Reboot",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/commands/reboot/{{deviceId}}?timeout={{timeout}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["commands", "reboot", "{{deviceId}}"],
+              "query": [
+                {
+                  "key": "timeout",
+                  "value": "{{timeout}}",
+                  "description": "ACK timeout in milliseconds (optional)"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"delay_seconds\": 30\n}"
+            },
+            "description": "Request device reboot with optional delay."
+          }
+        },
+        {
+          "name": "Update Network Config",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/commands/network/{{deviceId}}?timeout={{timeout}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["commands", "network", "{{deviceId}}"],
+              "query": [
+                {
+                  "key": "timeout",
+                  "value": "{{timeout}}",
+                  "description": "ACK timeout in milliseconds (optional)"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"new_ssid\": \"NewNetwork\",\n  \"new_password\": \"securePassword123\"\n}"
+            },
+            "description": "Update device WiFi network configuration."
+          }
+        },
+        {
+          "name": "Rotate Screen",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/commands/rotate/{{deviceId}}?timeout={{timeout}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["commands", "rotate", "{{deviceId}}"],
+              "query": [
+                {
+                  "key": "timeout",
+                  "value": "{{timeout}}",
+                  "description": "ACK timeout in milliseconds (optional)"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"orientation\": \"landscape\",\n  \"fullscreen\": true\n}"
+            },
+            "description": "Rotate screen orientation. Options: landscape, portrait, auto, landscape_left, landscape_right, portrait_up, portrait_down"
+          }
+        },
+        {
+          "name": "Broadcast Clock Override",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/commands/broadcast/clock",
+              "host": ["{{baseUrl}}"],
+              "path": ["commands", "broadcast", "clock"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"simulated_time\": \"2024-06-15T12:00:00Z\"\n}"
+            },
+            "description": "Broadcast clock override to all connected devices."
+          }
+        },
+        {
+          "name": "Broadcast Screen Rotation",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/commands/broadcast/rotate",
+              "host": ["{{baseUrl}}"],
+              "path": ["commands", "broadcast", "rotate"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"orientation\": \"portrait\",\n  \"fullscreen\": false\n}"
+            },
+            "description": "Broadcast screen rotation to all connected devices."
+          }
+        },
+        {
+          "name": "Get Command Stats",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/commands/stats",
+              "host": ["{{baseUrl}}"],
+              "path": ["commands", "stats"]
+            },
+            "description": "Get count of devices connected for commands."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Fleet",
+      "description": "Fleet management for grouping devices",
+      "item": [
+        {
+          "name": "Create Fleet",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/fleets",
+              "host": ["{{baseUrl}}"],
+              "path": ["fleets"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"{{fleetId}}\",\n  \"name\": \"Test Fleet\",\n  \"description\": \"A test fleet for device management\",\n  \"metadata\": {\n    \"region\": \"us-west\",\n    \"deployment\": \"production\"\n  }\n}"
+            },
+            "description": "Create a new fleet for device grouping."
+          }
+        },
+        {
+          "name": "List Fleets",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/fleets",
+              "host": ["{{baseUrl}}"],
+              "path": ["fleets"]
+            },
+            "description": "Get list of all fleets."
+          }
+        },
+        {
+          "name": "Get Fleet Details",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/fleets/{{fleetId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["fleets", "{{fleetId}}"]
+            },
+            "description": "Get details of a specific fleet."
+          }
+        },
+        {
+          "name": "Update Fleet",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/fleets/{{fleetId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["fleets", "{{fleetId}}"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Updated Fleet Name\",\n  \"description\": \"Updated description\",\n  \"metadata\": {\n    \"region\": \"us-east\"\n  }\n}"
+            },
+            "description": "Update fleet details (partial update)."
+          }
+        },
+        {
+          "name": "Delete Fleet",
+          "request": {
+            "method": "DELETE",
+            "url": {
+              "raw": "{{baseUrl}}/fleets/{{fleetId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["fleets", "{{fleetId}}"]
+            },
+            "description": "Delete a fleet."
+          }
+        },
+        {
+          "name": "Add Device to Fleet",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/fleets/{{fleetId}}/devices/{{deviceId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["fleets", "{{fleetId}}", "devices", "{{deviceId}}"]
+            },
+            "description": "Add a device to a fleet."
+          }
+        },
+        {
+          "name": "Remove Device from Fleet",
+          "request": {
+            "method": "DELETE",
+            "url": {
+              "raw": "{{baseUrl}}/fleets/{{fleetId}}/devices/{{deviceId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["fleets", "{{fleetId}}", "devices", "{{deviceId}}"]
+            },
+            "description": "Remove a device from a fleet."
+          }
+        },
+        {
+          "name": "List Fleet Devices",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/fleets/{{fleetId}}/devices",
+              "host": ["{{baseUrl}}"],
+              "path": ["fleets", "{{fleetId}}", "devices"]
+            },
+            "description": "Get all devices in a fleet."
+          }
+        },
+        {
+          "name": "Get Device Memberships",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/fleets/device/{{deviceId}}/memberships",
+              "host": ["{{baseUrl}}"],
+              "path": ["fleets", "device", "{{deviceId}}", "memberships"]
+            },
+            "description": "Get all fleets a device belongs to."
+          }
+        },
+        {
+          "name": "Fleet: Rotate All Screens",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/fleets/{{fleetId}}/commands/rotate",
+              "host": ["{{baseUrl}}"],
+              "path": ["fleets", "{{fleetId}}", "commands", "rotate"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"orientation\": \"landscape\",\n  \"fullscreen\": true\n}"
+            },
+            "description": "Rotate screens for all devices in a fleet."
+          }
+        },
+        {
+          "name": "Fleet: Reboot All Devices",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/fleets/{{fleetId}}/commands/reboot",
+              "host": ["{{baseUrl}}"],
+              "path": ["fleets", "{{fleetId}}", "commands", "reboot"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"delay_seconds\": 60\n}"
+            },
+            "description": "Reboot all devices in a fleet."
+          }
+        },
+        {
+          "name": "Fleet: Update Network Config",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/fleets/{{fleetId}}/commands/network",
+              "host": ["{{baseUrl}}"],
+              "path": ["fleets", "{{fleetId}}", "commands", "network"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"new_ssid\": \"FleetNetwork\",\n  \"new_password\": \"fleetPassword123\"\n}"
+            },
+            "description": "Update network config for all devices in a fleet."
+          }
+        },
+        {
+          "name": "Fleet: Set Clock",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/fleets/{{fleetId}}/commands/clock",
+              "host": ["{{baseUrl}}"],
+              "path": ["fleets", "{{fleetId}}", "commands", "clock"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"simulated_time\": \"2024-01-01T00:00:00Z\"\n}"
+            },
+            "description": "Set clock override for all devices in a fleet."
+          }
+        },
+        {
+          "name": "Fleet: Push Content",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/fleets/{{fleetId}}/content/push",
+              "host": ["{{baseUrl}}"],
+              "path": ["fleets", "{{fleetId}}", "content", "push"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"delivery_id\": \"fleet-{{deliveryId}}\",\n  \"content\": {\n    \"id\": 100,\n    \"hmac_signature\": \"fleet-sig\",\n    \"time_slots\": [\n      {\n        \"id\": \"fleet-slot\",\n        \"start_window\": \"2024-01-01T00:00:00Z\",\n        \"end_window\": \"2024-12-31T23:59:59Z\",\n        \"campaigns\": [\n          {\n            \"id\": \"fleet-campaign\",\n            \"index\": 0,\n            \"media_id\": \"fleet-media\"\n          }\n        ]\n      }\n    ],\n    \"fallback_media_ref\": {\n      \"media_id\": \"fleet-fallback\"\n    },\n    \"created_at\": \"2024-01-01T00:00:00Z\"\n  },\n  \"media\": [\n    {\n      \"id\": \"fleet-media\",\n      \"checksum\": \"sha256:fleet\",\n      \"url\": \"https://example.com/fleet/media.mp4\"\n    }\n  ],\n  \"requires_ack\": true\n}"
+            },
+            "description": "Push content to all devices in a fleet."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Analytics",
+      "description": "Analytics event ingestion and querying",
+      "item": [
+        {
+          "name": "Submit Batch (gRPC wrapper)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/analytics/batch/{{deviceFingerprint}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["analytics", "batch", "{{deviceFingerprint}}"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"batch_id\": \"{{$randomUUID}}\",\n  \"events\": [\n    {\n      \"event_id\": \"{{eventId}}\",\n      \"timestamp_ms\": {{$timestamp}},\n      \"category\": \"PLAYBACK\",\n      \"playback\": {\n        \"campaign_id\": \"{{campaignId}}\",\n        \"media_id\": \"{{mediaId}}\",\n        \"duration_ms\": 5000,\n        \"completed\": true\n      }\n    }\n  ]\n}"
+            },
+            "description": "Submit analytics batch via HTTP (wraps gRPC call)."
+          }
+        },
+        {
+          "name": "Submit Events",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/analytics/events/{{deviceId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["analytics", "events", "{{deviceId}}"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"events\": [\n    {\n      \"event_id\": \"{{eventId}}\",\n      \"timestamp_ms\": {{$timestamp}},\n      \"category\": \"PLAYBACK\",\n      \"playback\": {\n        \"campaign_id\": \"{{campaignId}}\",\n        \"media_id\": \"{{mediaId}}\",\n        \"duration_ms\": 5000,\n        \"completed\": true\n      }\n    }\n  ]\n}"
+            },
+            "description": "Submit analytics events (auto-creates batch)."
+          }
+        },
+        {
+          "name": "Submit Error Event",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/analytics/events/{{deviceId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["analytics", "events", "{{deviceId}}"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"events\": [\n    {\n      \"event_id\": \"error-{{$randomUUID}}\",\n      \"timestamp_ms\": {{$timestamp}},\n      \"category\": \"ERROR\",\n      \"error\": {\n        \"error_type\": \"DOWNLOAD_FAILED\",\n        \"message\": \"Failed to download media\",\n        \"component\": \"MediaDownloader\",\n        \"is_fatal\": false\n      }\n    }\n  ]\n}"
+            },
+            "description": "Submit error analytics event."
+          }
+        },
+        {
+          "name": "Submit Health Event",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/analytics/events/{{deviceId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["analytics", "events", "{{deviceId}}"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"events\": [\n    {\n      \"event_id\": \"health-{{$randomUUID}}\",\n      \"timestamp_ms\": {{$timestamp}},\n      \"category\": \"HEALTH\",\n      \"health\": {\n        \"battery_level\": 85.5,\n        \"storage_free_bytes\": 2147483648,\n        \"cpu_usage\": 23.4,\n        \"memory_usage\": 45.2,\n        \"connection_quality\": 1\n      }\n    }\n  ]\n}"
+            },
+            "description": "Submit health metrics event."
+          }
+        },
+        {
+          "name": "Query Events (with filters)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/analytics/events?device_id={{deviceId}}&category=PLAYBACK&from=1700000000000&to=1800000000000",
+              "host": ["{{baseUrl}}"],
+              "path": ["analytics", "events"],
+              "query": [
+                {
+                  "key": "device_id",
+                  "value": "{{deviceId}}",
+                  "description": "Filter by device ID"
+                },
+                {
+                  "key": "category",
+                  "value": "PLAYBACK",
+                  "description": "Filter by event category: PLAYBACK, ERROR, HEALTH"
+                },
+                {
+                  "key": "from",
+                  "value": "1700000000000",
+                  "description": "Start timestamp (ms)"
+                },
+                {
+                  "key": "to",
+                  "value": "1800000000000",
+                  "description": "End timestamp (ms)"
+                }
+              ]
+            },
+            "description": "Query analytics events with filters."
+          }
+        },
+        {
+          "name": "Get Device Events",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/analytics/events/{{deviceId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["analytics", "events", "{{deviceId}}"]
+            },
+            "description": "Get all events for a specific device."
+          }
+        },
+        {
+          "name": "List Devices with Analytics",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/analytics/devices",
+              "host": ["{{baseUrl}}"],
+              "path": ["analytics", "devices"]
+            },
+            "description": "List all devices that have submitted analytics."
+          }
+        },
+        {
+          "name": "Get Device Stats",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/analytics/devices/{{deviceId}}/stats",
+              "host": ["{{baseUrl}}"],
+              "path": ["analytics", "devices", "{{deviceId}}", "stats"]
+            },
+            "description": "Get analytics statistics for a specific device."
+          }
+        },
+        {
+          "name": "Get Fleet Events",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/analytics/fleets/{{fleetId}}/events",
+              "host": ["{{baseUrl}}"],
+              "path": ["analytics", "fleets", "{{fleetId}}", "events"]
+            },
+            "description": "Get all events from devices in a fleet."
+          }
+        },
+        {
+          "name": "Get Global Summary",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/analytics/summary",
+              "host": ["{{baseUrl}}"],
+              "path": ["analytics", "summary"]
+            },
+            "description": "Get global analytics summary."
+          }
+        },
+        {
+          "name": "Get Overall Stats",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/analytics/stats",
+              "host": ["{{baseUrl}}"],
+              "path": ["analytics", "stats"]
+            },
+            "description": "Get overall analytics statistics."
+          }
+        },
+        {
+          "name": "Clear Device Events",
+          "request": {
+            "method": "DELETE",
+            "url": {
+              "raw": "{{baseUrl}}/analytics/events/{{deviceId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["analytics", "events", "{{deviceId}}"]
+            },
+            "description": "Clear all events for a specific device."
+          }
+        },
+        {
+          "name": "Clear All Events (Admin)",
+          "request": {
+            "method": "DELETE",
+            "url": {
+              "raw": "{{baseUrl}}/analytics/events",
+              "host": ["{{baseUrl}}"],
+              "path": ["analytics", "events"]
+            },
+            "description": "Clear all analytics events (admin operation)."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Server",
+      "description": "Server health and info endpoints",
+      "item": [
+        {
+          "name": "Health Check",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/health",
+              "host": ["{{baseUrl}}"],
+              "path": ["health"]
+            },
+            "description": "Server health check endpoint."
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -8,158 +8,227 @@
 import { GrpcMethod, GrpcStreamMethod } from "@nestjs/microservices";
 import { Observable } from "rxjs";
 
-/** Event types for routing */
 export enum EventType {
   EVENT_TYPE_UNSPECIFIED = 0,
-  /** ERROR - Urgent - upload on FAIR+ connections */
-  ERROR = 1,
-  /** IMPRESSION - Normal - upload on GOOD+ connections */
-  IMPRESSION = 2,
-  /** HEARTBEAT - Background - EXCELLENT only */
+  /** IMPRESSION - Campaign/media playback */
+  IMPRESSION = 1,
+  /** ERROR - Application errors */
+  ERROR = 2,
+  /** HEARTBEAT - Keepalive signal */
   HEARTBEAT = 3,
-  /** PERFORMANCE - Background - EXCELLENT only */
-  PERFORMANCE = 4,
-  /** LIFECYCLE - Normal - upload on GOOD+ connections */
-  LIFECYCLE = 5,
+  /** LIFECYCLE - App start/pause/resume/stop */
+  LIFECYCLE = 4,
+  /** PERFORMANCE - Frame drops, memory, thermal */
+  PERFORMANCE = 5,
+  /** HEALTH - Device health metrics */
+  HEALTH = 6,
+  /** CUSTOM - Custom events (user-defined) */
+  CUSTOM = 100,
   UNRECOGNIZED = -1,
 }
 
-/** Connection quality levels */
 export enum ConnectionQuality {
   CONNECTION_QUALITY_UNSPECIFIED = 0,
-  /** OFFLINE - No upload */
   OFFLINE = 1,
-  /** POOR - < 1 Mbps, errors only */
+  /** POOR - < 1 Mbps, high latency */
   POOR = 2,
-  /** FAIR - 1-5 Mbps, urgent only */
+  /** FAIR - 1-5 Mbps */
   FAIR = 3,
-  /** GOOD - 5-20 Mbps, normal uploads */
+  /** GOOD - 5-20 Mbps */
   GOOD = 4,
-  /** EXCELLENT - > 20 Mbps, all events */
+  /** EXCELLENT - > 20 Mbps */
   EXCELLENT = 5,
   UNRECOGNIZED = -1,
 }
 
-/** Event = Tiny envelope + payload bytes */
+export enum ConnectionType {
+  CONNECTION_TYPE_UNSPECIFIED = 0,
+  WIFI = 1,
+  ETHERNET = 2,
+  CELLULAR_4G = 3,
+  CELLULAR_5G = 4,
+  CELLULAR_3G = 5,
+  CELLULAR_2G = 6,
+  UNKNOWN = 7,
+  UNRECOGNIZED = -1,
+}
+
+export enum PayloadEncoding {
+  PAYLOAD_ENCODING_UNSPECIFIED = 0,
+  /** CBOR - Preferred: compact, typed, IETF standard */
+  CBOR = 1,
+  /** MSGPACK - Alternative: widely supported */
+  MSGPACK = 2,
+  /** JSON - Fallback: human-readable, larger */
+  JSON = 3,
+  UNRECOGNIZED = -1,
+}
+
+export enum CompressionAlgorithm {
+  COMPRESSION_UNSPECIFIED = 0,
+  NONE = 1,
+  GZIP = 2,
+  /** ZSTD - Preferred for speed/ratio tradeoff */
+  ZSTD = 3,
+  UNRECOGNIZED = -1,
+}
+
 export interface Event {
-  /** 16-byte UUID (binary) */
+  /** 16-byte UUID (binary) - smaller than 36-char string */
   eventId: Uint8Array;
-  /** 8 bytes fixed */
+  /** Milliseconds since epoch (8 bytes fixed) - smaller than int64 varint for recent times */
   timestampMs: number;
-  /** Enum = 1 byte varint */
+  /** Event type for server routing */
   type: EventType;
-  /** 0x00MMmmPP = major.minor.patch */
+  /**
+   * Schema version as packed integer: 0x00MMmmPP = major.minor.patch
+   * e.g., 0x00020000 = v2.0.0, 0x00020001 = v2.0.1
+   */
   schemaVersion: number;
-  /** CBOR/MsgPack/JSON encoded data */
+  /**
+   * Flexible payload: CBOR (preferred), MsgPack, or compressed JSON
+   * Client and server agree on encoding via schema_version
+   */
   payload: Uint8Array;
-  /** Optional: network at event time */
+  /** Optional: network context at event creation (not upload) */
   network?: NetworkContext | undefined;
 }
 
 export interface Batch {
   /** 16-byte UUID */
   batchId: Uint8Array;
-  /** Multiple events */
+  /** Multiple events in one network call */
   events: Event[];
-  /** 4-byte hash vs string */
+  /** Device fingerprint (hash of stable identifiers) - 4 bytes vs string */
   deviceFingerprint: number;
-  /** Backpressure signal */
-  queue?: QueueStatus | undefined;
-  /** Batch creation time */
+  /** Client queue status for backpressure signaling */
+  queue?:
+    | QueueStatus
+    | undefined;
+  /** Client timestamp of batch creation */
   sentAtMs: number;
 }
 
-/** Status of the client's local event queue */
 export interface QueueStatus {
-  /** Number of events waiting to be sent */
-  pendingEvents: number;
-  /** Age of oldest pending event (hours) */
-  oldestEventAgeHours: number;
-  /** True if queue is growing faster than draining */
-  isBackpressure: boolean;
+  /** Pending events waiting to be sent */
+  pendingCount: number;
+  /** Age of oldest pending event (minutes) */
+  oldestPendingMinutes: number;
+  /** True if queue growing faster than draining */
+  isBackpressured: boolean;
+  /** Storage used by queue (KB) - for client storage pressure */
+  storageKb: number;
 }
 
 export interface NetworkContext {
   quality: ConnectionQuality;
+  /** Connection type encoded as small integer */
+  connectionType: ConnectionType;
+  /** Signal strength: -100 to 0 dBm, or 127 if unknown */
+  signalDbm: number;
+  /** Last measured speeds (0 if unknown) */
   downloadMbps: number;
   uploadMbps: number;
-  /** wifi, ethernet, cellular, unknown */
-  connectionType: string;
-  /** For wifi/cellular */
-  signalStrengthDbm: number;
 }
 
 export interface Ack {
+  /** Echo batch_id for correlation */
   batchId: Uint8Array;
+  /** Accepted = stored durably (may still be processing) */
   accepted: boolean;
-  /** 16-byte UUIDs */
+  /** Event IDs that failed validation (rare, payload corruption/schema mismatch) */
   rejectedEventIds: Uint8Array[];
-  /** Server backpressure */
+  /**
+   * Server-recommended throttle (ms before next upload)
+   * 0 = no throttle, client decides
+   */
   throttleMs: number;
-  /** Updated policy (optional) */
+  /** Updated policy (if server wants to change client behavior) */
   policy?: Policy | undefined;
 }
 
-export interface Policy {
-  /** Minimum quality for uploads */
-  minQuality: ConnectionQuality;
-  /** Max events per batch */
-  maxBatchSize: number;
-  /** Force upload if older */
-  maxQueueAgeHours: number;
-  /** Suggested upload interval */
-  uploadIntervalSeconds: number;
+export interface PolicyRequest {
+  deviceFingerprint: number;
+  /** For feature detection */
+  sdkVersion: string;
+  /** Client's max acceptable payload size */
+  maxPayloadBytes: number;
 }
 
-/** Analytics service - client reports events to server */
+export interface Policy {
+  /** Batch sizing */
+  maxEventsPerBatch: number;
+  /** Max payload size server accepts */
+  maxPayloadBytes: number;
+  /** Timing */
+  uploadIntervalSeconds: number;
+  /** For errors/critical events */
+  urgentIntervalSeconds: number;
+  /** Quality thresholds */
+  minQualityForRegular: ConnectionQuality;
+  minQualityForUrgent: ConnectionQuality;
+  /** Encoding preferences */
+  preferredEncoding: PayloadEncoding;
+  compression: CompressionAlgorithm;
+  /** Circuit breaker */
+  circuitOpenSeconds: number;
+}
+
+/** Empty message for stream close */
+export interface Close {
+}
 
 export interface AnalyticsServiceClient {
-  /** Fire-and-forget batch upload (primary method) */
+  /**
+   * Fire-and-forget batch upload (primary method)
+   * Server acknowledges receipt; client doesn't block on response
+   */
 
   ingest(request: Batch): Observable<Ack>;
 
-  /** Optional: long-lived stream for real-time */
+  /**
+   * Long-lived stream for real-time scenarios (optional)
+   * Bidirectional allows server backpressure signals
+   */
 
   stream(request: Observable<Event>): Observable<Ack>;
+
+  /** Get current upload policy (called on startup/periodically) */
+
+  getPolicy(request: PolicyRequest): Observable<Policy>;
 }
 
-/** Analytics service - client reports events to server */
-
 export interface AnalyticsServiceController {
-  /** Fire-and-forget batch upload (primary method) */
+  /**
+   * Fire-and-forget batch upload (primary method)
+   * Server acknowledges receipt; client doesn't block on response
+   */
 
   ingest(request: Batch): Promise<Ack> | Observable<Ack> | Ack;
 
-  /** Optional: long-lived stream for real-time */
+  /**
+   * Long-lived stream for real-time scenarios (optional)
+   * Bidirectional allows server backpressure signals
+   */
 
   stream(request: Observable<Event>): Observable<Ack>;
+
+  /** Get current upload policy (called on startup/periodically) */
+
+  getPolicy(request: PolicyRequest): Promise<Policy> | Observable<Policy> | Policy;
 }
 
 export function AnalyticsServiceControllerMethods() {
   return function (constructor: Function) {
-    const grpcMethods: string[] = ["ingest"];
+    const grpcMethods: string[] = ["ingest", "getPolicy"];
     for (const method of grpcMethods) {
-      const descriptor: any = Reflect.getOwnPropertyDescriptor(
-        constructor.prototype,
-        method,
-      );
-      GrpcMethod("AnalyticsService", method)(
-        constructor.prototype[method],
-        method,
-        descriptor,
-      );
+      const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
+      GrpcMethod("AnalyticsService", method)(constructor.prototype[method], method, descriptor);
     }
     const grpcStreamMethods: string[] = ["stream"];
     for (const method of grpcStreamMethods) {
-      const descriptor: any = Reflect.getOwnPropertyDescriptor(
-        constructor.prototype,
-        method,
-      );
-      GrpcStreamMethod("AnalyticsService", method)(
-        constructor.prototype[method],
-        method,
-        descriptor,
-      );
+      const descriptor: any = Reflect.getOwnPropertyDescriptor(constructor.prototype, method);
+      GrpcStreamMethod("AnalyticsService", method)(constructor.prototype[method], method, descriptor);
     }
   };
 }

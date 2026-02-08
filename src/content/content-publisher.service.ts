@@ -1,6 +1,7 @@
 import { Injectable, OnModuleDestroy } from "@nestjs/common";
 import { Subject } from "rxjs";
 import type { ContentPackage } from "src/generated/content/v1/content";
+import { AcknowledgeStatus, type ContentProgress } from "src/generated/content/v1/content";
 
 export interface AckResult {
   success: boolean;
@@ -76,15 +77,25 @@ export class ContentPublisherService implements OnModuleDestroy {
   acknowledge(
     deviceId: string,
     deliveryId: string,
-    success: boolean,
-    errorMsg?: string,
+    status: AcknowledgeStatus,
+    message?: string,
+    progress?: ContentProgress,
   ) {
+    // Map status to success boolean
+    const success = status === AcknowledgeStatus.ACKNOWLEDGE_STATUS_COMPLETED;
+
     console.log(
-      `✅ Ack from ${deviceId} for ${deliveryId}: ${success ? "success" : "failed"}`,
+      `✅ Ack from ${deviceId} for ${deliveryId}: ${success ? "success" : "failed"} (status: ${status})`,
     );
 
-    if (!success && errorMsg) {
-      console.error(`   Error: ${errorMsg}`);
+    if (!success && message) {
+      console.error(`   Error: ${message}`);
+    }
+
+    if (progress) {
+      console.log(
+        `   Progress: ${progress.percentComplete}% (${progress.completedMediaCount}/${progress.totalMediaCount})`,
+      );
     }
 
     // Resolve pending ACK if exists
@@ -96,7 +107,7 @@ export class ContentPublisherService implements OnModuleDestroy {
           success,
           deliveryId,
           deviceId,
-          errorMessage: errorMsg,
+          errorMessage: message,
           timedOut: false,
         });
         devicePending.delete(deliveryId);
