@@ -147,7 +147,7 @@ export class CommandPublisherService implements OnModuleDestroy {
   async sendCommand(
     deviceId: string,
     commandPackage: CommandPackage,
-    timeoutMs: number = 5000,
+    timeoutMs: number = 60000,
   ): Promise<AckResult> {
     const stream$ = this.subscriptions.get(deviceId);
 
@@ -230,7 +230,7 @@ export class CommandPublisherService implements OnModuleDestroy {
 
   async broadcastCommand(
     commandPackage: CommandPackage,
-    timeoutMs: number = 5000,
+    timeoutMs: number = 60000,
   ): Promise<AckResult[]> {
     console.log(
       `📢 Broadcasting command to ${this.subscriptions.size} devices`,

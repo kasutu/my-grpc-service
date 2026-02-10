@@ -168,7 +168,7 @@ export class FleetService {
   async broadcastCommand(
     fleetId: string,
     commandBuilder: (deviceId: string) => CommandPackage,
-    timeoutMs: number = 5000,
+    timeoutMs: number = 60000,
   ): Promise<FleetCommandResult> {
     const fleet = this.fleets.get(fleetId);
     if (!fleet) {
@@ -231,7 +231,7 @@ export class FleetService {
   async broadcastContent(
     fleetId: string,
     contentPackage: ContentPackage,
-    timeoutMs: number = 5000,
+    timeoutMs: number = 60000,
   ): Promise<FleetBroadcastResult> {
     const fleet = this.fleets.get(fleetId);
     if (!fleet) {
@@ -285,7 +285,7 @@ export class FleetService {
     fleetId: string,
     orientation: string,
     fullscreen?: boolean,
-    timeoutMs: number = 5000,
+    timeoutMs: number = 60000,
   ): Promise<FleetCommandResult> {
     return this.broadcastCommand(
       fleetId,
@@ -306,7 +306,7 @@ export class FleetService {
   async rebootFleet(
     fleetId: string,
     delaySeconds: number = 0,
-    timeoutMs: number = 5000,
+    timeoutMs: number = 60000,
   ): Promise<FleetCommandResult> {
     return this.broadcastCommand(
       fleetId,
@@ -325,7 +325,7 @@ export class FleetService {
     fleetId: string,
     newSsid: string,
     newPassword: string,
-    timeoutMs: number = 5000,
+    timeoutMs: number = 60000,
   ): Promise<FleetCommandResult> {
     return this.broadcastCommand(
       fleetId,
@@ -343,7 +343,7 @@ export class FleetService {
   async setClockFleet(
     fleetId: string,
     simulatedTime: string,
-    timeoutMs: number = 5000,
+    timeoutMs: number = 60000,
   ): Promise<FleetCommandResult> {
     return this.broadcastCommand(
       fleetId,

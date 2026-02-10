@@ -12,7 +12,7 @@ export function delay(ms: number): Promise<void> {
  */
 export function waitFor<T>(
   getter: () => T | undefined,
-  timeoutMs: number = 5000,
+  timeoutMs: number = 60000,
 ): Promise<T> {
   return new Promise((resolve, reject) => {
     const startTime = Date.now();

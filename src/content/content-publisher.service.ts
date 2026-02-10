@@ -141,7 +141,7 @@ export class ContentPublisherService implements OnModuleDestroy {
   async publishToDevice(
     deviceId: string,
     contentPackage: ContentPackage,
-    timeoutMs: number = 5000,
+    timeoutMs: number = 60000,
   ): Promise<AckResult> {
     const stream$ = this.subscriptions.get(deviceId);
 
@@ -218,7 +218,7 @@ export class ContentPublisherService implements OnModuleDestroy {
 
   async broadcast(
     contentPackage: ContentPackage,
-    timeoutMs: number = 5000,
+    timeoutMs: number = 60000,
   ): Promise<AckResult[]> {
     console.log(`📢 Broadcasting to ${this.subscriptions.size} devices`);
     const promises: Promise<AckResult>[] = [];
