@@ -116,8 +116,11 @@ export class ContentHttpController {
       }
     }, 15000); // Send keepalive every 15 seconds
 
+    console.log(`[HTTP Stream] Starting content stream for ${deviceId}, delivery: ${contentPackage.deliveryId}`);
+
     const subscription = stream$.subscribe({
       next: (update: ProgressUpdate) => {
+        console.log(`[HTTP Stream] Progress update: status=${update.status}, isFinal=${update.isFinal}, device=${update.deviceId}`);
         const event = this.formatProgressEvent(update);
         res.write(`data: ${JSON.stringify(event)}\n\n`);
         // Flush after each write to ensure data is sent immediately
@@ -227,6 +230,8 @@ export class ContentHttpController {
       { isFinal: boolean; success?: boolean }
     >();
 
+    console.log(`[HTTP Stream] Starting broadcast stream for delivery: ${contentPackage.deliveryId}`);
+
     const subscription = stream$.subscribe({
       next: (
         update:
@@ -236,6 +241,7 @@ export class ContentHttpController {
       ) => {
         // Handle meta events (started, complete)
         if ("type" in update) {
+          console.log(`[HTTP Stream] Broadcast meta event: ${update.type}, devices=${update.totalDevices}`);
           if (update.type === "started") {
             res.write(
               `data: ${JSON.stringify({
@@ -266,6 +272,7 @@ export class ContentHttpController {
         }
 
         // Track state for this device
+        console.log(`[HTTP Stream] Broadcast progress: device=${update.deviceId}, status=${update.status}, isFinal=${update.isFinal}`);
         if (update.isFinal) {
           deviceStates.set(update.deviceId, {
             isFinal: true,

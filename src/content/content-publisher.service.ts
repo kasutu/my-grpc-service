@@ -137,6 +137,7 @@ export class ContentPublisherService implements OnModuleDestroy {
       const pending = devicePending.get(deliveryId);
       if (pending) {
         // Emit progress update if callback is registered
+        console.log(`[Publisher] Emitting progress: device=${deviceId}, delivery=${deliveryId}, status=${status}, isFinal=${isFinal}, hasCallback=${!!pending.onProgress}`);
         if (pending.onProgress) {
           pending.onProgress({
             isFinal,
