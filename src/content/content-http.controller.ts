@@ -108,6 +108,14 @@ export class ContentHttpController {
     // Send an initial comment to establish connection (some clients need this)
     res.write(":ok\n\n");
 
+    // Set up keep-alive interval to prevent connection timeout
+    const keepAliveInterval = setInterval(() => {
+      res.write(":keepalive\n\n");
+      if (typeof (res as unknown as { flush: () => void }).flush === "function") {
+        (res as unknown as { flush: () => void }).flush();
+      }
+    }, 15000); // Send keepalive every 15 seconds
+
     const subscription = stream$.subscribe({
       next: (update: ProgressUpdate) => {
         const event = this.formatProgressEvent(update);
@@ -118,9 +126,11 @@ export class ContentHttpController {
         }
       },
       complete: () => {
+        clearInterval(keepAliveInterval);
         res.end();
       },
       error: (err: Error) => {
+        clearInterval(keepAliveInterval);
         res.write(
           `data: ${JSON.stringify({
             event: "error",
@@ -133,6 +143,7 @@ export class ContentHttpController {
 
     // Clean up subscription when client disconnects
     res.on("close", () => {
+      clearInterval(keepAliveInterval);
       subscription.unsubscribe();
     });
   }
@@ -202,6 +213,14 @@ export class ContentHttpController {
     // Send an initial comment to establish connection (some clients need this)
     res.write(":ok\n\n");
 
+    // Set up keep-alive interval to prevent connection timeout
+    const keepAliveInterval = setInterval(() => {
+      res.write(":keepalive\n\n");
+      if (typeof (res as unknown as { flush: () => void }).flush === "function") {
+        (res as unknown as { flush: () => void }).flush();
+      }
+    }, 15000); // Send keepalive every 15 seconds
+
     // Track completion state per device
     const deviceStates = new Map<
       string,
@@ -262,9 +281,11 @@ export class ContentHttpController {
         }
       },
       complete: () => {
+        clearInterval(keepAliveInterval);
         res.end();
       },
       error: (err: Error) => {
+        clearInterval(keepAliveInterval);
         res.write(
           `data: ${JSON.stringify({
             event: "error",
@@ -277,6 +298,7 @@ export class ContentHttpController {
 
     // Clean up subscription when client disconnects
     res.on("close", () => {
+      clearInterval(keepAliveInterval);
       subscription.unsubscribe();
     });
   }
