@@ -51,7 +51,8 @@ export class ContentHttpController {
 
     // If stream mode is requested, return SSE stream
     if (streamMode.toLowerCase() === "true") {
-      return this.streamToDevice(deviceId, contentPackage, timeout, res);
+      this.streamToDevice(deviceId, contentPackage, timeout, res);
+      return; // Response is handled by streamToDevice
     }
 
     const result = await this.publisher.publishToDevice(
@@ -68,7 +69,7 @@ export class ContentHttpController {
   @Header("Cache-Control", "no-cache, no-transform")
   @Header("Connection", "keep-alive")
   @Header("X-Accel-Buffering", "no")
-  async pushToDeviceStream(
+  pushToDeviceStream(
     @Param("deviceId") deviceId: string,
     @Body() body: any,
     @Query("timeout") timeoutMs: string = "5000",
@@ -81,7 +82,8 @@ export class ContentHttpController {
     });
 
     const timeout = parseInt(timeoutMs, 10) || 5000;
-    return this.streamToDevice(deviceId, contentPackage, timeout, res);
+    this.streamToDevice(deviceId, contentPackage, timeout, res);
+    // Do not return anything - response is handled via @Res()
   }
 
   private streamToDevice(
@@ -110,6 +112,10 @@ export class ContentHttpController {
       next: (update: ProgressUpdate) => {
         const event = this.formatProgressEvent(update);
         res.write(`data: ${JSON.stringify(event)}\n\n`);
+        // Flush after each write to ensure data is sent immediately
+        if (typeof (res as unknown as { flush: () => void }).flush === "function") {
+          (res as unknown as { flush: () => void }).flush();
+        }
       },
       complete: () => {
         res.end();
@@ -149,7 +155,8 @@ export class ContentHttpController {
 
     // If stream mode is requested, return SSE stream
     if (streamMode.toLowerCase() === "true") {
-      return this.streamBroadcast(contentPackage, timeout, res);
+      this.streamBroadcast(contentPackage, timeout, res);
+      return; // Response is handled by streamBroadcast
     }
 
     const results = await this.publisher.broadcast(contentPackage, timeout);
@@ -162,7 +169,7 @@ export class ContentHttpController {
   @Header("Cache-Control", "no-cache, no-transform")
   @Header("Connection", "keep-alive")
   @Header("X-Accel-Buffering", "no")
-  async broadcastStream(
+  broadcastStream(
     @Body() body: any,
     @Query("timeout") timeoutMs: string = "5000",
     @Query("ack") requireAck: string = "true",
@@ -174,7 +181,8 @@ export class ContentHttpController {
     });
 
     const timeout = parseInt(timeoutMs, 10) || 5000;
-    return this.streamBroadcast(contentPackage, timeout, res);
+    this.streamBroadcast(contentPackage, timeout, res);
+    // Do not return anything - response is handled via @Res()
   }
 
   private streamBroadcast(
@@ -231,6 +239,10 @@ export class ContentHttpController {
               })}\n\n`,
             );
           }
+          // Flush after each write
+          if (typeof (res as unknown as { flush: () => void }).flush === "function") {
+            (res as unknown as { flush: () => void }).flush();
+          }
           return;
         }
 
@@ -244,6 +256,10 @@ export class ContentHttpController {
 
         const event = this.formatBroadcastProgressEvent(update, deviceStates);
         res.write(`data: ${JSON.stringify(event)}\n\n`);
+        // Flush after each write to ensure data is sent immediately
+        if (typeof (res as unknown as { flush: () => void }).flush === "function") {
+          (res as unknown as { flush: () => void }).flush();
+        }
       },
       complete: () => {
         res.end();

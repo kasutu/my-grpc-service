@@ -65,7 +65,8 @@ export class CommandHttpController {
 
     // If stream mode is requested, return SSE stream
     if (streamMode.toLowerCase() === "true") {
-      return this.streamCommand(deviceId, command, timeout, res);
+      this.streamCommand(deviceId, command, timeout, res);
+      return; // Response is handled by streamCommand
     }
 
     const result = await this.publisher.sendCommand(deviceId, command, timeout);
@@ -77,7 +78,7 @@ export class CommandHttpController {
   @Header("Cache-Control", "no-cache, no-transform")
   @Header("Connection", "keep-alive")
   @Header("X-Accel-Buffering", "no")
-  async setClockStream(
+  setClockStream(
     @Param("deviceId") deviceId: string,
     @Body() body: any,
     @Query("timeout") timeoutMs: string = "5000",
@@ -93,7 +94,8 @@ export class CommandHttpController {
     });
 
     const timeout = parseInt(timeoutMs, 10) || 5000;
-    return this.streamCommand(deviceId, command, timeout, res);
+    this.streamCommand(deviceId, command, timeout, res);
+    // Do not return anything - response is handled via @Res()
   }
 
   @Post("reboot/:deviceId")
@@ -129,7 +131,7 @@ export class CommandHttpController {
   @Header("Cache-Control", "no-cache, no-transform")
   @Header("Connection", "keep-alive")
   @Header("X-Accel-Buffering", "no")
-  async rebootDeviceStream(
+  rebootDeviceStream(
     @Param("deviceId") deviceId: string,
     @Body() body: any,
     @Query("timeout") timeoutMs: string = "5000",
@@ -145,7 +147,8 @@ export class CommandHttpController {
     });
 
     const timeout = parseInt(timeoutMs, 10) || 5000;
-    return this.streamCommand(deviceId, command, timeout, res);
+    this.streamCommand(deviceId, command, timeout, res);
+    // Do not return anything - response is handled via @Res()
   }
 
   @Post("network/:deviceId")
@@ -182,7 +185,7 @@ export class CommandHttpController {
   @Header("Cache-Control", "no-cache, no-transform")
   @Header("Connection", "keep-alive")
   @Header("X-Accel-Buffering", "no")
-  async updateNetworkStream(
+  updateNetworkStream(
     @Param("deviceId") deviceId: string,
     @Body() body: any,
     @Query("timeout") timeoutMs: string = "5000",
@@ -199,7 +202,8 @@ export class CommandHttpController {
     });
 
     const timeout = parseInt(timeoutMs, 10) || 5000;
-    return this.streamCommand(deviceId, command, timeout, res);
+    this.streamCommand(deviceId, command, timeout, res);
+    // Do not return anything - response is handled via @Res()
   }
 
   @Post("rotate/:deviceId")
@@ -236,7 +240,7 @@ export class CommandHttpController {
   @Header("Cache-Control", "no-cache, no-transform")
   @Header("Connection", "keep-alive")
   @Header("X-Accel-Buffering", "no")
-  async rotateScreenStream(
+  rotateScreenStream(
     @Param("deviceId") deviceId: string,
     @Body() body: any,
     @Query("timeout") timeoutMs: string = "5000",
@@ -253,7 +257,8 @@ export class CommandHttpController {
     });
 
     const timeout = parseInt(timeoutMs, 10) || 5000;
-    return this.streamCommand(deviceId, command, timeout, res);
+    this.streamCommand(deviceId, command, timeout, res);
+    // Do not return anything - response is handled via @Res()
   }
 
   @Post("broadcast/clock")
@@ -276,7 +281,8 @@ export class CommandHttpController {
     const timeout = parseInt(timeoutMs, 10) || 5000;
 
     if (streamMode.toLowerCase() === "true") {
-      return this.streamBroadcast(command, timeout, res);
+      this.streamBroadcast(command, timeout, res);
+      return; // Response is handled by streamBroadcast
     }
 
     const results = await this.publisher.broadcastCommand(command, timeout);
@@ -288,7 +294,7 @@ export class CommandHttpController {
   @Header("Cache-Control", "no-cache, no-transform")
   @Header("Connection", "keep-alive")
   @Header("X-Accel-Buffering", "no")
-  async broadcastClockStream(
+  broadcastClockStream(
     @Body() body: any,
     @Query("timeout") timeoutMs: string = "5000",
     @Res() res: Response,
@@ -303,7 +309,8 @@ export class CommandHttpController {
     });
 
     const timeout = parseInt(timeoutMs, 10) || 5000;
-    return this.streamBroadcast(command, timeout, res);
+    this.streamBroadcast(command, timeout, res);
+    // Do not return anything - response is handled via @Res()
   }
 
   @Post("broadcast/rotate")
@@ -327,7 +334,8 @@ export class CommandHttpController {
     const timeout = parseInt(timeoutMs, 10) || 5000;
 
     if (streamMode.toLowerCase() === "true") {
-      return this.streamBroadcast(command, timeout, res);
+      this.streamBroadcast(command, timeout, res);
+      return; // Response is handled by streamBroadcast
     }
 
     const results = await this.publisher.broadcastCommand(command, timeout);
@@ -339,7 +347,7 @@ export class CommandHttpController {
   @Header("Cache-Control", "no-cache, no-transform")
   @Header("Connection", "keep-alive")
   @Header("X-Accel-Buffering", "no")
-  async broadcastRotateStream(
+  broadcastRotateStream(
     @Body() body: any,
     @Query("timeout") timeoutMs: string = "5000",
     @Res() res: Response,
@@ -355,7 +363,8 @@ export class CommandHttpController {
     });
 
     const timeout = parseInt(timeoutMs, 10) || 5000;
-    return this.streamBroadcast(command, timeout, res);
+    this.streamBroadcast(command, timeout, res);
+    // Do not return anything - response is handled via @Res()
   }
 
   @Get("stats")
@@ -391,6 +400,10 @@ export class CommandHttpController {
       next: (update: ProgressUpdate) => {
         const event = this.formatProgressEvent(update);
         res.write(`data: ${JSON.stringify(event)}\n\n`);
+        // Flush after each write to ensure data is sent immediately
+        if (typeof (res as unknown as { flush: () => void }).flush === "function") {
+          (res as unknown as { flush: () => void }).flush();
+        }
       },
       complete: () => {
         res.end();
@@ -466,6 +479,10 @@ export class CommandHttpController {
               })}\n\n`,
             );
           }
+          // Flush after each write
+          if (typeof (res as unknown as { flush: () => void }).flush === "function") {
+            (res as unknown as { flush: () => void }).flush();
+          }
           return;
         }
 
@@ -479,6 +496,10 @@ export class CommandHttpController {
 
         const event = this.formatBroadcastProgressEvent(update, deviceStates);
         res.write(`data: ${JSON.stringify(event)}\n\n`);
+        // Flush after each write to ensure data is sent immediately
+        if (typeof (res as unknown as { flush: () => void }).flush === "function") {
+          (res as unknown as { flush: () => void }).flush();
+        }
       },
       complete: () => {
         res.end();
