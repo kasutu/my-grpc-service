@@ -231,23 +231,17 @@ export class ContentHttpController {
           console.log(`[HTTP Stream] Broadcast meta event: ${update.type}, devices=${update.totalDevices}`);
           if (update.type === "started") {
             res.write(
-              `data: ${JSON.stringify({
-                event: "started",
-                data: {
-                  delivery_id: update.deliveryId,
-                  total_devices: update.totalDevices,
-                },
+              `event: started\ndata: ${JSON.stringify({
+                delivery_id: update.deliveryId,
+                total_devices: update.totalDevices,
               })}\n\n`,
             );
           } else if (update.type === "complete") {
             res.write(
-              `data: ${JSON.stringify({
-                event: "summary",
-                data: {
-                  total_devices: update.totalDevices,
-                  successful: update.successful,
-                  failed: update.failed,
-                },
+              `event: summary\ndata: ${JSON.stringify({
+                total_devices: update.totalDevices,
+                successful: update.successful,
+                failed: update.failed,
               })}\n\n`,
             );
           }
