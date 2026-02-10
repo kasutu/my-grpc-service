@@ -325,12 +325,12 @@ export class ContentHttpController {
               total_media: update.progress.totalMediaCount,
               completed_media: update.progress.completedMediaCount,
               failed_media: update.progress.failedMediaCount,
-              media_status: update.progress.mediaStatus.map((m) => ({
+              media_status: update.progress.mediaStatus?.map((m) => ({
                 media_id: m.mediaId,
                 state: m.state,
                 error_code: m.errorCode || undefined,
                 error_message: m.errorMessage || undefined,
-              })),
+              })) ?? [],
             }
           : undefined,
       },
