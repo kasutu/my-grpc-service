@@ -245,47 +245,53 @@ POST   /content/broadcast/stream   # Broadcast with streaming progress (SSE)
 GET    /content/stats              # Get connected device count
 ```
 
-**Streaming Mode:**
-Add `?stream=true` to any push/broadcast endpoint to receive Server-Sent Events (SSE) with progress updates:
+**Streaming Mode (SSE):**
+Use the `/stream` endpoints to receive Server-Sent Events with real-time progress updates from devices.
 
 **Single Device Events:**
-- `progress` events: Intermediate status updates (RECEIVED, IN_PROGRESS)
-- `complete` events: Final success status (COMPLETED)
-- `error` events: Final failure status (FAILED, PARTIAL) or timeouts
+- `started` - Delivery started (initial event)
+- `progress` - Intermediate status (RECEIVED=1, IN_PROGRESS=2) with download progress
+- `complete` - Final success status (COMPLETED=3)
+- `error` - Final failure status (FAILED=5, PARTIAL=4) or timeout
 
 **Broadcast Events:**
-- `started` event: Initial event indicating broadcast started with device count
-- `progress` events: Per-device status updates
-- `complete` events: Per-device final results
-- `summary` event: Final summary with total/successful/failed counts
-- `error` events: Errors during broadcast
+- `started` - Initial event with delivery ID and total device count
+- `progress` - Per-device status updates
+- `complete` - Per-device final results
+- `summary` - Final summary with total/successful/failed counts
+- `error` - Errors during broadcast
 
-Example with curl:
+**Example with curl:**
 ```bash
-curl -N http://localhost:31691/content/push/device-001/stream \
+curl -N http://localhost:31691/content/broadcast/stream \
   -H "Content-Type: application/json" \
   -d '{"delivery_id": "pkg-001", "content": {...}, "media": [...]}'
 ```
 
-Progress event format:
-```json
-{"event": "progress", "data": {"delivery_id": "pkg-001", "device_id": "device-001", "status": 2, "progress": {"percent_complete": 45.5, "total_media": 4, "completed_media": 2, "failed_media": 0, "media_status": [...]}}}
+**SSE Format:**
+```
+event: started
+data: {"delivery_id": "pkg-001", "total_devices": 2}
+
+event: progress
+data: {"delivery_id": "pkg-001", "device_id": "device-001", "status": 1, "total_devices": 2, "completed_devices": 0, "remaining_devices": 2}
+
+event: progress
+data: {"delivery_id": "pkg-001", "device_id": "device-001", "status": 2, "progress": {"percent_complete": 50.0, "total_media": 4, "completed_media": 2, "failed_media": 0, "media_status": []}, "total_devices": 2, "completed_devices": 0, "remaining_devices": 2}
+
+event: complete
+data: {"delivery_id": "pkg-001", "device_id": "device-001", "success": true, "message": "Content delivered successfully", "timed_out": false, "total_devices": 2, "completed_devices": 1, "remaining_devices": 1}
+
+event: summary
+data: {"total_devices": 2, "successful": 2, "failed": 0}
 ```
 
-Complete event format:
-```json
-{"event": "complete", "data": {"delivery_id": "pkg-001", "device_id": "device-001", "success": true, "message": "Content delivered successfully", "timed_out": false}}
-```
-
-Broadcast started event:
-```json
-{"event": "started", "data": {"delivery_id": "pkg-001", "total_devices": 5}}
-```
-
-Broadcast summary event:
-```json
-{"event": "summary", "data": {"total_devices": 5, "successful": 4, "failed": 1}}
-```
+**Status Values:**
+- `1` = RECEIVED - Content package received, processing started
+- `2` = IN_PROGRESS - Downloading/verifying media (includes progress data)
+- `3` = COMPLETED - All media processed successfully
+- `4` = PARTIAL - Some media succeeded, some failed
+- `5` = FAILED - Complete failure
 
 ### Commands API
 ```
@@ -305,35 +311,44 @@ POST   /commands/broadcast/rotate/stream    # Broadcast rotation with streaming 
 GET    /commands/stats                      # Get connected count
 ```
 
-**Streaming Mode:**
-Add `?stream=true` to any command endpoint to receive Server-Sent Events (SSE) with progress updates:
+**Streaming Mode (SSE):**
+Use the `/stream` endpoints to receive Server-Sent Events with real-time command execution updates.
 
 **Single Device Events:**
-- `progress` events: Command received, executing (RECEIVED status)
-- `complete` events: Command executed successfully (COMPLETED)
-- `error` events: Command failed (FAILED, REJECTED) or timeout
+- `progress` - Command received, executing (RECEIVED status)
+- `complete` - Command executed successfully (COMPLETED)
+- `error` - Command failed (FAILED, REJECTED) or timeout
 
 **Broadcast Events:**
-- `started` event: Initial event with command ID and device count
-- `progress` events: Per-device status updates
-- `complete` events: Per-device final results  
-- `summary` event: Final summary with total/successful/failed counts
-- `error` events: Errors during broadcast
+- `started` - Initial event with command ID and device count
+- `progress` - Per-device status updates
+- `complete` - Per-device final results  
+- `summary` - Final summary with total/successful/failed counts
+- `error` - Errors during broadcast
 
-Example with curl:
+**Example with curl:**
 ```bash
 curl -N http://localhost:31691/commands/rotate/device-001/stream \
   -H "Content-Type: application/json" \
   -d '{"orientation": "landscape", "fullscreen": true}'
 ```
 
-Progress event format:
-```json
-{"event": "progress", "data": {"command_id": "rotate-123456", "device_id": "device-001", "status": 1, "message": "Command received, executing..."}}
+**SSE Format:**
+```
+event: progress
+data: {"command_id": "rotate-123456", "device_id": "device-001", "status": 1, "message": "Command received, executing..."}
+
+event: complete
+data: {"command_id": "rotate-123456", "device_id": "device-001", "success": true, "message": "Screen rotated successfully", "timed_out": false}
 ```
 
-Complete event format:
-```json
+**Status Values:**
+- `1` = RECEIVED - Command received, executing
+- `2` = COMPLETED - Executed successfully
+- `3` = FAILED - Execution failed
+- `4` = REJECTED - Command rejected (invalid, unsupported)
+
+**Complete event format:**
 {"event": "complete", "data": {"command_id": "rotate-123456", "device_id": "device-001", "success": true, "message": "Screen rotated successfully", "timed_out": false}}
 ```
 
