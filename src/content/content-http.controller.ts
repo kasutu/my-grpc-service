@@ -49,12 +49,7 @@ export class ContentHttpController {
 
     const timeout = parseInt(timeoutMs, 10) || 5000;
 
-    // If stream mode is requested, return SSE stream
-    if (streamMode.toLowerCase() === "true") {
-      this.streamToDevice(deviceId, contentPackage, timeout, res);
-      return; // Response is handled by streamToDevice
-    }
-
+    // Non-streaming mode - normal JSON response
     const result = await this.publisher.publishToDevice(
       deviceId,
       contentPackage,
@@ -122,7 +117,7 @@ export class ContentHttpController {
       next: (update: ProgressUpdate) => {
         console.log(`[HTTP Stream] Progress update: status=${update.status}, isFinal=${update.isFinal}, device=${update.deviceId}`);
         const event = this.formatProgressEvent(update);
-        res.write(`data: ${JSON.stringify(event)}\n\n`);
+        res.write(`event: ${event.event}\ndata: ${JSON.stringify(event.data)}\n\n`);
         // Flush after each write to ensure data is sent immediately
         if (typeof (res as unknown as { flush: () => void }).flush === "function") {
           (res as unknown as { flush: () => void }).flush();
@@ -157,8 +152,6 @@ export class ContentHttpController {
     @Body() body: any,
     @Query("timeout") timeoutMs: string = "5000",
     @Query("ack") requireAck: string = "true",
-    @Query("stream") streamMode: string = "false",
-    @Res({ passthrough: true }) res: Response,
   ) {
     const contentPackage = ContentMapper.toContentPackage({
       ...body,
@@ -166,12 +159,6 @@ export class ContentHttpController {
     });
 
     const timeout = parseInt(timeoutMs, 10) || 5000;
-
-    // If stream mode is requested, return SSE stream
-    if (streamMode.toLowerCase() === "true") {
-      this.streamBroadcast(contentPackage, timeout, res);
-      return; // Response is handled by streamBroadcast
-    }
 
     const results = await this.publisher.broadcast(contentPackage, timeout);
 
@@ -281,7 +268,8 @@ export class ContentHttpController {
         }
 
         const event = this.formatBroadcastProgressEvent(update, deviceStates);
-        res.write(`data: ${JSON.stringify(event)}\n\n`);
+        res.write(`event: ${event.event}\ndata: ${JSON.stringify(event.data)}
+\n`);
         // Flush after each write to ensure data is sent immediately
         if (typeof (res as unknown as { flush: () => void }).flush === "function") {
           (res as unknown as { flush: () => void }).flush();

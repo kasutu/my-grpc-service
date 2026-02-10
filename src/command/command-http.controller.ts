@@ -266,8 +266,6 @@ export class CommandHttpController {
   async broadcastClock(
     @Body() body: any,
     @Query("timeout") timeoutMs: string = "5000",
-    @Query("stream") streamMode: string = "false",
-    @Res({ passthrough: true }) res: Response,
   ) {
     const command = CommandMapper.toCommandPackage({
       command_id: `clock-broadcast-${Date.now()}`,
@@ -279,11 +277,6 @@ export class CommandHttpController {
     });
 
     const timeout = parseInt(timeoutMs, 10) || 5000;
-
-    if (streamMode.toLowerCase() === "true") {
-      this.streamBroadcast(command, timeout, res);
-      return; // Response is handled by streamBroadcast
-    }
 
     const results = await this.publisher.broadcastCommand(command, timeout);
     return this.formatBroadcastResponse(results);
@@ -318,8 +311,6 @@ export class CommandHttpController {
   async broadcastRotate(
     @Body() body: any,
     @Query("timeout") timeoutMs: string = "5000",
-    @Query("stream") streamMode: string = "false",
-    @Res({ passthrough: true }) res: Response,
   ) {
     const command = CommandMapper.toCommandPackage({
       command_id: `rotate-broadcast-${Date.now()}`,
@@ -332,11 +323,6 @@ export class CommandHttpController {
     });
 
     const timeout = parseInt(timeoutMs, 10) || 5000;
-
-    if (streamMode.toLowerCase() === "true") {
-      this.streamBroadcast(command, timeout, res);
-      return; // Response is handled by streamBroadcast
-    }
 
     const results = await this.publisher.broadcastCommand(command, timeout);
     return this.formatBroadcastResponse(results);
@@ -407,7 +393,7 @@ export class CommandHttpController {
     const subscription = stream$.subscribe({
       next: (update: ProgressUpdate) => {
         const event = this.formatProgressEvent(update);
-        res.write(`data: ${JSON.stringify(event)}\n\n`);
+        res.write(`event: ${event.event}\ndata: ${JSON.stringify(event.data)}\n\n`);
         // Flush after each write to ensure data is sent immediately
         if (typeof (res as unknown as { flush: () => void }).flush === "function") {
           (res as unknown as { flush: () => void }).flush();
@@ -420,10 +406,7 @@ export class CommandHttpController {
       error: (err: Error) => {
         clearInterval(keepAliveInterval);
         res.write(
-          `data: ${JSON.stringify({
-            event: "error",
-            data: { message: err.message },
-          })}\n\n`,
+          `event: error\ndata: ${JSON.stringify({ message: err.message })}\n\n`,
         );
         res.end();
       },
@@ -478,23 +461,17 @@ export class CommandHttpController {
         if ("type" in update) {
           if (update.type === "started") {
             res.write(
-              `data: ${JSON.stringify({
-                event: "started",
-                data: {
-                  command_id: update.commandId,
-                  total_devices: update.totalDevices,
-                },
+              `event: started\ndata: ${JSON.stringify({
+                command_id: update.commandId,
+                total_devices: update.totalDevices,
               })}\n\n`,
             );
           } else if (update.type === "complete") {
             res.write(
-              `data: ${JSON.stringify({
-                event: "summary",
-                data: {
-                  total_devices: update.totalDevices,
-                  successful: update.successful,
-                  failed: update.failed,
-                },
+              `event: summary\ndata: ${JSON.stringify({
+                total_devices: update.totalDevices,
+                successful: update.successful,
+                failed: update.failed,
               })}\n\n`,
             );
           }
@@ -514,7 +491,7 @@ export class CommandHttpController {
         }
 
         const event = this.formatBroadcastProgressEvent(update, deviceStates);
-        res.write(`data: ${JSON.stringify(event)}\n\n`);
+        res.write(`event: ${event.event}\ndata: ${JSON.stringify(event.data)}\n\n`);
         // Flush after each write to ensure data is sent immediately
         if (typeof (res as unknown as { flush: () => void }).flush === "function") {
           (res as unknown as { flush: () => void }).flush();
