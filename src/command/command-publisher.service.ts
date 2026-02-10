@@ -1,8 +1,21 @@
 import { Injectable, OnModuleDestroy } from "@nestjs/common";
-import { Subject, firstValueFrom, race, timer } from "rxjs";
-import { map, take } from "rxjs/operators";
+import { Subject, Observable } from "rxjs";
 import type { CommandPackage } from "src/generated/command/v1/command";
 import { AcknowledgeStatus } from "src/generated/command/v1/command";
+
+export interface ProgressUpdate {
+  /** Indicates if this is a final (terminal) update */
+  isFinal: boolean;
+  /** Current status of the operation */
+  status: AcknowledgeStatus;
+  /** Whether the operation was successful (only valid when isFinal=true) */
+  success?: boolean;
+  commandId: string;
+  deviceId: string;
+  errorMessage?: string;
+  /** Whether this update represents a timeout */
+  timedOut?: boolean;
+}
 
 export interface AckResult {
   success: boolean;
@@ -24,6 +37,8 @@ interface PendingAck {
   resolve: (result: AckResult) => void;
   reject: (error: Error) => void;
   timeoutMs: number;
+  /** Callback for progress updates */
+  onProgress?: (update: ProgressUpdate) => void;
 }
 
 @Injectable()
@@ -120,12 +135,25 @@ export class CommandPublisherService implements OnModuleDestroy {
       info.lastActivity = new Date();
     }
 
-    // Only resolve pending ACK for final statuses
-    if (isFinal) {
-      const devicePending = this.pendingAcks.get(deviceId);
-      if (devicePending) {
-        const pending = devicePending.get(commandId);
-        if (pending) {
+    const devicePending = this.pendingAcks.get(deviceId);
+    if (devicePending) {
+      const pending = devicePending.get(commandId);
+      if (pending) {
+        // Emit progress update if callback is registered
+        if (pending.onProgress) {
+          pending.onProgress({
+            isFinal,
+            status,
+            success: isFinal ? success : undefined,
+            commandId,
+            deviceId,
+            errorMessage: message,
+            timedOut: false,
+          });
+        }
+
+        // Only resolve pending ACK for final statuses
+        if (isFinal) {
           pending.resolve({
             success,
             commandId,
@@ -186,6 +214,81 @@ export class CommandPublisherService implements OnModuleDestroy {
     return this.waitForAck(deviceId, commandPackage.commandId, timeoutMs);
   }
 
+  /**
+   * Send command to a device with streaming progress updates
+   * Returns an Observable that emits progress updates until completion
+   */
+  sendCommandStream(
+    deviceId: string,
+    commandPackage: CommandPackage,
+    timeoutMs: number = 60000,
+  ): Observable<ProgressUpdate> {
+    const stream$ = this.subscriptions.get(deviceId);
+
+    if (!stream$ || stream$.closed) {
+      console.log(`❌ Device ${deviceId} not connected for commands`);
+      return new Observable<ProgressUpdate>((subscriber) => {
+        subscriber.next({
+          isFinal: true,
+          status: AcknowledgeStatus.ACKNOWLEDGE_STATUS_FAILED,
+          success: false,
+          commandId: commandPackage.commandId,
+          deviceId,
+          errorMessage: "Device not connected",
+          timedOut: false,
+        });
+        subscriber.complete();
+      });
+    }
+
+    // Send the command
+    stream$.next(commandPackage);
+    console.log(`📤 Sent command ${commandPackage.commandId} to ${deviceId} (streaming)`);
+
+    // Update last activity
+    const info = this.deviceInfo.get(deviceId);
+    if (info) {
+      info.lastActivity = new Date();
+    }
+
+    // If no ACK required, return immediately as success
+    if (!commandPackage.requiresAck) {
+      return new Observable<ProgressUpdate>((subscriber) => {
+        subscriber.next({
+          isFinal: true,
+          status: AcknowledgeStatus.ACKNOWLEDGE_STATUS_COMPLETED,
+          success: true,
+          commandId: commandPackage.commandId,
+          deviceId,
+          timedOut: false,
+        });
+        subscriber.complete();
+      });
+    }
+
+    // Return observable that streams progress updates
+    return new Observable<ProgressUpdate>((subscriber) => {
+      const onProgress = (update: ProgressUpdate) => {
+        subscriber.next(update);
+        if (update.isFinal) {
+          subscriber.complete();
+        }
+      };
+
+      this.waitForAckWithProgress(
+        deviceId,
+        commandPackage.commandId,
+        timeoutMs,
+        onProgress,
+      );
+
+      // Cleanup on unsubscribe
+      return () => {
+        // Pending ack will be cleaned up by timeout
+      };
+    });
+  }
+
   private waitForAck(
     deviceId: string,
     commandId: string,
@@ -228,6 +331,62 @@ export class CommandPublisherService implements OnModuleDestroy {
     });
   }
 
+  private waitForAckWithProgress(
+    deviceId: string,
+    commandId: string,
+    timeoutMs: number,
+    onProgress: (update: ProgressUpdate) => void,
+  ): void {
+    // Create pending ACK entry
+    if (!this.pendingAcks.has(deviceId)) {
+      this.pendingAcks.set(deviceId, new Map());
+    }
+    const devicePending = this.pendingAcks.get(deviceId)!;
+
+    const pending: PendingAck = {
+      commandId,
+      deviceId,
+      resolve: () => {
+        // Resolve is called, progress callback already handled final state
+      },
+      reject: (error: Error) => {
+        onProgress({
+          isFinal: true,
+          status: AcknowledgeStatus.ACKNOWLEDGE_STATUS_FAILED,
+          success: false,
+          commandId,
+          deviceId,
+          errorMessage: error.message,
+          timedOut: false,
+        });
+      },
+      timeoutMs,
+      onProgress,
+    };
+
+    devicePending.set(commandId, pending);
+
+    // Set up timeout
+    setTimeout(() => {
+      const stillPending = devicePending.get(commandId);
+      if (stillPending) {
+        devicePending.delete(commandId);
+        if (devicePending.size === 0) {
+          this.pendingAcks.delete(deviceId);
+        }
+        onProgress({
+          isFinal: true,
+          status: AcknowledgeStatus.ACKNOWLEDGE_STATUS_FAILED,
+          success: false,
+          commandId,
+          deviceId,
+          errorMessage: `ACK timeout after ${timeoutMs}ms`,
+          timedOut: true,
+        });
+      }
+    }, timeoutMs);
+  }
+
   async broadcastCommand(
     commandPackage: CommandPackage,
     timeoutMs: number = 60000,
@@ -250,6 +409,66 @@ export class CommandPublisherService implements OnModuleDestroy {
     }
 
     return Promise.all(promises);
+  }
+
+  /**
+   * Broadcast command to all connected devices with streaming progress
+   * Returns an Observable that emits updates for all devices
+   */
+  broadcastCommandStream(
+    commandPackage: CommandPackage,
+    timeoutMs: number = 60000,
+  ): Observable<ProgressUpdate & { totalDevices: number; completedDevices: number }> {
+    return new Observable((subscriber) => {
+      const devices = Array.from(this.subscriptions.entries()).filter(
+        ([, stream$]) => !stream$.closed,
+      );
+      const totalDevices = devices.length;
+      let completedDevices = 0;
+
+      if (totalDevices === 0) {
+        subscriber.complete();
+        return;
+      }
+
+      console.log(`📢 Broadcasting command to ${totalDevices} devices (streaming)`);
+
+      const subscriptions: { deviceId: string; unsubscribe: () => void }[] = [];
+
+      for (const [deviceId] of devices) {
+        const stream = this.sendCommandStream(deviceId, commandPackage, timeoutMs);
+
+        const sub = stream.subscribe({
+          next: (update) => {
+            subscriber.next({
+              ...update,
+              totalDevices,
+              completedDevices,
+            });
+            if (update.isFinal) {
+              completedDevices++;
+            }
+          },
+          complete: () => {
+            if (completedDevices >= totalDevices) {
+              subscriber.complete();
+            }
+          },
+        });
+
+        subscriptions.push({
+          deviceId,
+          unsubscribe: () => sub.unsubscribe(),
+        });
+      }
+
+      // Cleanup on unsubscribe
+      return () => {
+        for (const { unsubscribe } of subscriptions) {
+          unsubscribe();
+        }
+      };
+    });
   }
 
   getConnectedCount(): number {

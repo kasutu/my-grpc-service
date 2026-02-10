@@ -239,20 +239,74 @@ Example:
 ### Content API
 ```
 POST   /content/push/:deviceId     # Push content to specific device
+POST   /content/push/:deviceId/stream  # Push with streaming progress (SSE)
 POST   /content/broadcast          # Broadcast to all connected devices
+POST   /content/broadcast/stream   # Broadcast with streaming progress (SSE)
 GET    /content/stats              # Get connected device count
+```
+
+**Streaming Mode:**
+Add `?stream=true` to any push/broadcast endpoint to receive Server-Sent Events (SSE) with progress updates:
+- `progress` events: Intermediate status updates (RECEIVED, IN_PROGRESS)
+- `complete` events: Final success status (COMPLETED)
+- `error` events: Final failure status (FAILED, PARTIAL) or timeouts
+
+Example with curl:
+```bash
+curl -N http://localhost:31691/content/push/device-001/stream \
+  -H "Content-Type: application/json" \
+  -d '{"delivery_id": "pkg-001", "content": {...}, "media": [...]}'
+```
+
+Progress event format:
+```json
+{"event": "progress", "data": {"delivery_id": "pkg-001", "device_id": "device-001", "status": 2, "progress": {"percent_complete": 45.5, "total_media": 4, "completed_media": 2, "failed_media": 0, "media_status": [...]}}}
+```
+
+Complete event format:
+```json
+{"event": "complete", "data": {"delivery_id": "pkg-001", "device_id": "device-001", "success": true, "message": "Content delivered successfully", "timed_out": false}}
 ```
 
 ### Commands API
 ```
-GET    /commands/devices           # List connected devices
-POST   /commands/clock/:deviceId   # Set clock override
-POST   /commands/reboot/:deviceId  # Request reboot
-POST   /commands/network/:deviceId # Update network config
-POST   /commands/rotate/:deviceId  # Rotate screen
-POST   /commands/broadcast/clock   # Broadcast clock to all
-POST   /commands/broadcast/rotate  # Broadcast rotation to all
-GET    /commands/stats             # Get connected count
+GET    /commands/devices                    # List connected devices
+POST   /commands/clock/:deviceId            # Set clock override
+POST   /commands/clock/:deviceId/stream     # Set clock with streaming (SSE)
+POST   /commands/reboot/:deviceId           # Request reboot
+POST   /commands/reboot/:deviceId/stream    # Reboot with streaming (SSE)
+POST   /commands/network/:deviceId          # Update network config
+POST   /commands/network/:deviceId/stream   # Network update with streaming (SSE)
+POST   /commands/rotate/:deviceId           # Rotate screen
+POST   /commands/rotate/:deviceId/stream    # Rotate with streaming (SSE)
+POST   /commands/broadcast/clock            # Broadcast clock to all
+POST   /commands/broadcast/clock/stream     # Broadcast clock with streaming (SSE)
+POST   /commands/broadcast/rotate           # Broadcast rotation to all
+POST   /commands/broadcast/rotate/stream    # Broadcast rotation with streaming (SSE)
+GET    /commands/stats                      # Get connected count
+```
+
+**Streaming Mode:**
+Add `?stream=true` to any command endpoint to receive Server-Sent Events (SSE) with progress updates:
+- `progress` events: Command received, executing (RECEIVED status)
+- `complete` events: Command executed successfully (COMPLETED)
+- `error` events: Command failed (FAILED, REJECTED) or timeout
+
+Example with curl:
+```bash
+curl -N http://localhost:31691/commands/rotate/device-001/stream \
+  -H "Content-Type: application/json" \
+  -d '{"orientation": "landscape", "fullscreen": true}'
+```
+
+Progress event format:
+```json
+{"event": "progress", "data": {"command_id": "rotate-123456", "device_id": "device-001", "status": 1, "message": "Command received, executing..."}}
+```
+
+Complete event format:
+```json
+{"event": "complete", "data": {"command_id": "rotate-123456", "device_id": "device-001", "success": true, "message": "Screen rotated successfully", "timed_out": false}}
 ```
 
 ### Fleet API

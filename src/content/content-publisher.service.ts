@@ -1,7 +1,23 @@
 import { Injectable, OnModuleDestroy } from "@nestjs/common";
-import { Subject } from "rxjs";
+import { Subject, Observable } from "rxjs";
 import type { ContentPackage } from "src/generated/content/v1/content";
 import { AcknowledgeStatus, type ContentProgress } from "src/generated/content/v1/content";
+
+export interface ProgressUpdate {
+  /** Indicates if this is a final (terminal) update */
+  isFinal: boolean;
+  /** Current status of the operation */
+  status: AcknowledgeStatus;
+  /** Whether the operation was successful (only valid when isFinal=true) */
+  success?: boolean;
+  deliveryId: string;
+  deviceId: string;
+  errorMessage?: string;
+  /** Progress details for IN_PROGRESS updates */
+  progress?: ContentProgress;
+  /** Whether this update represents a timeout */
+  timedOut?: boolean;
+}
 
 export interface AckResult {
   success: boolean;
@@ -17,6 +33,8 @@ interface PendingAck {
   resolve: (result: AckResult) => void;
   reject: (error: Error) => void;
   timeoutMs: number;
+  /** Callback for progress updates */
+  onProgress?: (update: ProgressUpdate) => void;
 }
 
 @Injectable()
@@ -114,12 +132,26 @@ export class ContentPublisherService implements OnModuleDestroy {
       );
     }
 
-    // Only resolve pending ACK for final statuses
-    if (isFinal) {
-      const devicePending = this.pendingAcks.get(deviceId);
-      if (devicePending) {
-        const pending = devicePending.get(deliveryId);
-        if (pending) {
+    const devicePending = this.pendingAcks.get(deviceId);
+    if (devicePending) {
+      const pending = devicePending.get(deliveryId);
+      if (pending) {
+        // Emit progress update if callback is registered
+        if (pending.onProgress) {
+          pending.onProgress({
+            isFinal,
+            status,
+            success: isFinal ? success : undefined,
+            deliveryId,
+            deviceId,
+            errorMessage: message,
+            progress,
+            timedOut: false,
+          });
+        }
+
+        // Only resolve pending ACK for final statuses
+        if (isFinal) {
           pending.resolve({
             success,
             deliveryId,
@@ -174,6 +206,75 @@ export class ContentPublisherService implements OnModuleDestroy {
     return this.waitForAck(deviceId, contentPackage.deliveryId, timeoutMs);
   }
 
+  /**
+   * Publish content to a device with streaming progress updates
+   * Returns an Observable that emits progress updates until completion
+   */
+  publishToDeviceStream(
+    deviceId: string,
+    contentPackage: ContentPackage,
+    timeoutMs: number = 60000,
+  ): Observable<ProgressUpdate> {
+    const stream$ = this.subscriptions.get(deviceId);
+
+    if (!stream$ || stream$.closed) {
+      console.log(`❌ Device ${deviceId} not connected`);
+      return new Observable<ProgressUpdate>((subscriber) => {
+        subscriber.next({
+          isFinal: true,
+          status: AcknowledgeStatus.ACKNOWLEDGE_STATUS_FAILED,
+          success: false,
+          deliveryId: contentPackage.deliveryId,
+          deviceId,
+          errorMessage: "Device not connected",
+          timedOut: false,
+        });
+        subscriber.complete();
+      });
+    }
+
+    // Send the content
+    stream$.next(contentPackage);
+    console.log(`📤 Published ${contentPackage.deliveryId} to ${deviceId} (streaming)`);
+
+    // If no ACK required, return immediately as success
+    if (!contentPackage.requiresAck) {
+      return new Observable<ProgressUpdate>((subscriber) => {
+        subscriber.next({
+          isFinal: true,
+          status: AcknowledgeStatus.ACKNOWLEDGE_STATUS_COMPLETED,
+          success: true,
+          deliveryId: contentPackage.deliveryId,
+          deviceId,
+          timedOut: false,
+        });
+        subscriber.complete();
+      });
+    }
+
+    // Return observable that streams progress updates
+    return new Observable<ProgressUpdate>((subscriber) => {
+      const onProgress = (update: ProgressUpdate) => {
+        subscriber.next(update);
+        if (update.isFinal) {
+          subscriber.complete();
+        }
+      };
+
+      this.waitForAckWithProgress(
+        deviceId,
+        contentPackage.deliveryId,
+        timeoutMs,
+        onProgress,
+      );
+
+      // Cleanup on unsubscribe
+      return () => {
+        // Pending ack will be cleaned up by timeout
+      };
+    });
+  }
+
   private waitForAck(
     deviceId: string,
     deliveryId: string,
@@ -216,6 +317,62 @@ export class ContentPublisherService implements OnModuleDestroy {
     });
   }
 
+  private waitForAckWithProgress(
+    deviceId: string,
+    deliveryId: string,
+    timeoutMs: number,
+    onProgress: (update: ProgressUpdate) => void,
+  ): void {
+    // Create pending ACK entry
+    if (!this.pendingAcks.has(deviceId)) {
+      this.pendingAcks.set(deviceId, new Map());
+    }
+    const devicePending = this.pendingAcks.get(deviceId)!;
+
+    const pending: PendingAck = {
+      deliveryId,
+      deviceId,
+      resolve: (result: AckResult) => {
+        // Resolve is called, progress callback already handled final state
+      },
+      reject: (error: Error) => {
+        onProgress({
+          isFinal: true,
+          status: AcknowledgeStatus.ACKNOWLEDGE_STATUS_FAILED,
+          success: false,
+          deliveryId,
+          deviceId,
+          errorMessage: error.message,
+          timedOut: false,
+        });
+      },
+      timeoutMs,
+      onProgress,
+    };
+
+    devicePending.set(deliveryId, pending);
+
+    // Set up timeout
+    setTimeout(() => {
+      const stillPending = devicePending.get(deliveryId);
+      if (stillPending) {
+        devicePending.delete(deliveryId);
+        if (devicePending.size === 0) {
+          this.pendingAcks.delete(deviceId);
+        }
+        onProgress({
+          isFinal: true,
+          status: AcknowledgeStatus.ACKNOWLEDGE_STATUS_FAILED,
+          success: false,
+          deliveryId,
+          deviceId,
+          errorMessage: `ACK timeout after ${timeoutMs}ms`,
+          timedOut: true,
+        });
+      }
+    }, timeoutMs);
+  }
+
   async broadcast(
     contentPackage: ContentPackage,
     timeoutMs: number = 60000,
@@ -235,6 +392,70 @@ export class ContentPublisherService implements OnModuleDestroy {
     }
 
     return Promise.all(promises);
+  }
+
+  /**
+   * Broadcast content to all connected devices with streaming progress
+   * Returns an Observable that emits updates for all devices
+   */
+  broadcastStream(
+    contentPackage: ContentPackage,
+    timeoutMs: number = 60000,
+  ): Observable<ProgressUpdate & { totalDevices: number; completedDevices: number }> {
+    return new Observable((subscriber) => {
+      const devices = Array.from(this.subscriptions.entries()).filter(
+        ([, stream$]) => !stream$.closed,
+      );
+      const totalDevices = devices.length;
+      let completedDevices = 0;
+
+      if (totalDevices === 0) {
+        subscriber.complete();
+        return;
+      }
+
+      console.log(`📢 Broadcasting to ${totalDevices} devices (streaming)`);
+
+      const subscriptions: { deviceId: string; unsubscribe: () => void }[] = [];
+
+      for (const [deviceId] of devices) {
+        const stream = this.publishToDeviceStream(
+          deviceId,
+          contentPackage,
+          timeoutMs,
+        );
+
+        const sub = stream.subscribe({
+          next: (update) => {
+            subscriber.next({
+              ...update,
+              totalDevices,
+              completedDevices,
+            });
+            if (update.isFinal) {
+              completedDevices++;
+            }
+          },
+          complete: () => {
+            if (completedDevices >= totalDevices) {
+              subscriber.complete();
+            }
+          },
+        });
+
+        subscriptions.push({
+          deviceId,
+          unsubscribe: () => sub.unsubscribe(),
+        });
+      }
+
+      // Cleanup on unsubscribe
+      return () => {
+        for (const { unsubscribe } of subscriptions) {
+          unsubscribe();
+        }
+      };
+    });
   }
 
   getConnectedCount(): number {

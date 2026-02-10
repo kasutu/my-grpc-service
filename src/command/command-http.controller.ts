@@ -8,13 +8,20 @@ import {
   HttpStatus,
   Res,
   Query,
+  Header,
 } from "@nestjs/common";
 import type { Response } from "express";
 import {
   CommandPublisherService,
   AckResult,
+  type ProgressUpdate,
 } from "./command-publisher.service";
 import { CommandMapper } from "src/command/interfaces/command.mapper";
+
+interface StreamEvent {
+  event: "progress" | "complete" | "error";
+  data: unknown;
+}
 
 @Controller("commands")
 export class CommandHttpController {
@@ -42,6 +49,7 @@ export class CommandHttpController {
     @Param("deviceId") deviceId: string,
     @Body() body: any,
     @Query("timeout") timeoutMs: string = "5000",
+    @Query("stream") streamMode: string = "false",
     @Res({ passthrough: true }) res: Response,
   ) {
     const command = CommandMapper.toCommandPackage({
@@ -54,9 +62,37 @@ export class CommandHttpController {
     });
 
     const timeout = parseInt(timeoutMs, 10) || 5000;
-    const result = await this.publisher.sendCommand(deviceId, command, timeout);
 
+    // If stream mode is requested, return SSE stream
+    if (streamMode.toLowerCase() === "true") {
+      return this.streamCommand(deviceId, command, timeout, res);
+    }
+
+    const result = await this.publisher.sendCommand(deviceId, command, timeout);
     return this.formatResponse(result, res);
+  }
+
+  @Post("clock/:deviceId/stream")
+  @Header("Content-Type", "text/event-stream")
+  @Header("Cache-Control", "no-cache")
+  @Header("Connection", "keep-alive")
+  async setClockStream(
+    @Param("deviceId") deviceId: string,
+    @Body() body: any,
+    @Query("timeout") timeoutMs: string = "5000",
+    @Res() res: Response,
+  ) {
+    const command = CommandMapper.toCommandPackage({
+      command_id: `clock-${Date.now()}`,
+      requires_ack: true,
+      issued_at: new Date().toISOString(),
+      set_clock: {
+        simulated_time: body.simulated_time ?? "",
+      },
+    });
+
+    const timeout = parseInt(timeoutMs, 10) || 5000;
+    return this.streamCommand(deviceId, command, timeout, res);
   }
 
   @Post("reboot/:deviceId")
@@ -65,6 +101,7 @@ export class CommandHttpController {
     @Param("deviceId") deviceId: string,
     @Body() body: any,
     @Query("timeout") timeoutMs: string = "5000",
+    @Query("stream") streamMode: string = "false",
     @Res({ passthrough: true }) res: Response,
   ) {
     const command = CommandMapper.toCommandPackage({
@@ -77,9 +114,36 @@ export class CommandHttpController {
     });
 
     const timeout = parseInt(timeoutMs, 10) || 5000;
-    const result = await this.publisher.sendCommand(deviceId, command, timeout);
 
+    if (streamMode.toLowerCase() === "true") {
+      return this.streamCommand(deviceId, command, timeout, res);
+    }
+
+    const result = await this.publisher.sendCommand(deviceId, command, timeout);
     return this.formatResponse(result, res);
+  }
+
+  @Post("reboot/:deviceId/stream")
+  @Header("Content-Type", "text/event-stream")
+  @Header("Cache-Control", "no-cache")
+  @Header("Connection", "keep-alive")
+  async rebootDeviceStream(
+    @Param("deviceId") deviceId: string,
+    @Body() body: any,
+    @Query("timeout") timeoutMs: string = "5000",
+    @Res() res: Response,
+  ) {
+    const command = CommandMapper.toCommandPackage({
+      command_id: `reboot-${Date.now()}`,
+      requires_ack: true,
+      issued_at: new Date().toISOString(),
+      request_reboot: {
+        delay_seconds: body.delay_seconds ?? 0,
+      },
+    });
+
+    const timeout = parseInt(timeoutMs, 10) || 5000;
+    return this.streamCommand(deviceId, command, timeout, res);
   }
 
   @Post("network/:deviceId")
@@ -88,6 +152,7 @@ export class CommandHttpController {
     @Param("deviceId") deviceId: string,
     @Body() body: any,
     @Query("timeout") timeoutMs: string = "5000",
+    @Query("stream") streamMode: string = "false",
     @Res({ passthrough: true }) res: Response,
   ) {
     const command = CommandMapper.toCommandPackage({
@@ -101,9 +166,37 @@ export class CommandHttpController {
     });
 
     const timeout = parseInt(timeoutMs, 10) || 5000;
-    const result = await this.publisher.sendCommand(deviceId, command, timeout);
 
+    if (streamMode.toLowerCase() === "true") {
+      return this.streamCommand(deviceId, command, timeout, res);
+    }
+
+    const result = await this.publisher.sendCommand(deviceId, command, timeout);
     return this.formatResponse(result, res);
+  }
+
+  @Post("network/:deviceId/stream")
+  @Header("Content-Type", "text/event-stream")
+  @Header("Cache-Control", "no-cache")
+  @Header("Connection", "keep-alive")
+  async updateNetworkStream(
+    @Param("deviceId") deviceId: string,
+    @Body() body: any,
+    @Query("timeout") timeoutMs: string = "5000",
+    @Res() res: Response,
+  ) {
+    const command = CommandMapper.toCommandPackage({
+      command_id: `network-${Date.now()}`,
+      requires_ack: true,
+      issued_at: new Date().toISOString(),
+      update_network: {
+        new_ssid: body.new_ssid ?? "",
+        new_password: body.new_password ?? "",
+      },
+    });
+
+    const timeout = parseInt(timeoutMs, 10) || 5000;
+    return this.streamCommand(deviceId, command, timeout, res);
   }
 
   @Post("rotate/:deviceId")
@@ -112,6 +205,7 @@ export class CommandHttpController {
     @Param("deviceId") deviceId: string,
     @Body() body: any,
     @Query("timeout") timeoutMs: string = "5000",
+    @Query("stream") streamMode: string = "false",
     @Res({ passthrough: true }) res: Response,
   ) {
     const command = CommandMapper.toCommandPackage({
@@ -125,9 +219,37 @@ export class CommandHttpController {
     });
 
     const timeout = parseInt(timeoutMs, 10) || 5000;
-    const result = await this.publisher.sendCommand(deviceId, command, timeout);
 
+    if (streamMode.toLowerCase() === "true") {
+      return this.streamCommand(deviceId, command, timeout, res);
+    }
+
+    const result = await this.publisher.sendCommand(deviceId, command, timeout);
     return this.formatResponse(result, res);
+  }
+
+  @Post("rotate/:deviceId/stream")
+  @Header("Content-Type", "text/event-stream")
+  @Header("Cache-Control", "no-cache")
+  @Header("Connection", "keep-alive")
+  async rotateScreenStream(
+    @Param("deviceId") deviceId: string,
+    @Body() body: any,
+    @Query("timeout") timeoutMs: string = "5000",
+    @Res() res: Response,
+  ) {
+    const command = CommandMapper.toCommandPackage({
+      command_id: `rotate-${Date.now()}`,
+      requires_ack: true,
+      issued_at: new Date().toISOString(),
+      rotate_screen: {
+        orientation: body.orientation ?? "auto",
+        fullscreen: body.fullscreen ?? null,
+      },
+    });
+
+    const timeout = parseInt(timeoutMs, 10) || 5000;
+    return this.streamCommand(deviceId, command, timeout, res);
   }
 
   @Post("broadcast/clock")
@@ -135,6 +257,8 @@ export class CommandHttpController {
   async broadcastClock(
     @Body() body: any,
     @Query("timeout") timeoutMs: string = "5000",
+    @Query("stream") streamMode: string = "false",
+    @Res({ passthrough: true }) res: Response,
   ) {
     const command = CommandMapper.toCommandPackage({
       command_id: `clock-broadcast-${Date.now()}`,
@@ -146,9 +270,35 @@ export class CommandHttpController {
     });
 
     const timeout = parseInt(timeoutMs, 10) || 5000;
-    const results = await this.publisher.broadcastCommand(command, timeout);
 
+    if (streamMode.toLowerCase() === "true") {
+      return this.streamBroadcast(command, timeout, res);
+    }
+
+    const results = await this.publisher.broadcastCommand(command, timeout);
     return this.formatBroadcastResponse(results);
+  }
+
+  @Post("broadcast/clock/stream")
+  @Header("Content-Type", "text/event-stream")
+  @Header("Cache-Control", "no-cache")
+  @Header("Connection", "keep-alive")
+  async broadcastClockStream(
+    @Body() body: any,
+    @Query("timeout") timeoutMs: string = "5000",
+    @Res() res: Response,
+  ) {
+    const command = CommandMapper.toCommandPackage({
+      command_id: `clock-broadcast-${Date.now()}`,
+      requires_ack: true,
+      issued_at: new Date().toISOString(),
+      set_clock: {
+        simulated_time: body.simulated_time ?? "",
+      },
+    });
+
+    const timeout = parseInt(timeoutMs, 10) || 5000;
+    return this.streamBroadcast(command, timeout, res);
   }
 
   @Post("broadcast/rotate")
@@ -156,6 +306,8 @@ export class CommandHttpController {
   async broadcastRotate(
     @Body() body: any,
     @Query("timeout") timeoutMs: string = "5000",
+    @Query("stream") streamMode: string = "false",
+    @Res({ passthrough: true }) res: Response,
   ) {
     const command = CommandMapper.toCommandPackage({
       command_id: `rotate-broadcast-${Date.now()}`,
@@ -168,15 +320,193 @@ export class CommandHttpController {
     });
 
     const timeout = parseInt(timeoutMs, 10) || 5000;
-    const results = await this.publisher.broadcastCommand(command, timeout);
 
+    if (streamMode.toLowerCase() === "true") {
+      return this.streamBroadcast(command, timeout, res);
+    }
+
+    const results = await this.publisher.broadcastCommand(command, timeout);
     return this.formatBroadcastResponse(results);
+  }
+
+  @Post("broadcast/rotate/stream")
+  @Header("Content-Type", "text/event-stream")
+  @Header("Cache-Control", "no-cache")
+  @Header("Connection", "keep-alive")
+  async broadcastRotateStream(
+    @Body() body: any,
+    @Query("timeout") timeoutMs: string = "5000",
+    @Res() res: Response,
+  ) {
+    const command = CommandMapper.toCommandPackage({
+      command_id: `rotate-broadcast-${Date.now()}`,
+      requires_ack: true,
+      issued_at: new Date().toISOString(),
+      rotate_screen: {
+        orientation: body.orientation ?? "auto",
+        fullscreen: body.fullscreen ?? null,
+      },
+    });
+
+    const timeout = parseInt(timeoutMs, 10) || 5000;
+    return this.streamBroadcast(command, timeout, res);
   }
 
   @Get("stats")
   getStats() {
     return {
       connected_devices: this.publisher.getConnectedCount(),
+    };
+  }
+
+  private streamCommand(
+    deviceId: string,
+    commandPackage: any,
+    timeout: number,
+    res: Response,
+  ): void {
+    const stream$ = this.publisher.sendCommandStream(
+      deviceId,
+      commandPackage,
+      timeout,
+    );
+
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+
+    const subscription = stream$.subscribe({
+      next: (update: ProgressUpdate) => {
+        const event = this.formatProgressEvent(update);
+        res.write(`data: ${JSON.stringify(event)}\n\n`);
+      },
+      complete: () => {
+        res.end();
+      },
+      error: (err: Error) => {
+        res.write(
+          `data: ${JSON.stringify({
+            event: "error",
+            data: { message: err.message },
+          })}\n\n`,
+        );
+        res.end();
+      },
+    });
+
+    // Clean up subscription when client disconnects
+    res.on("close", () => {
+      subscription.unsubscribe();
+    });
+  }
+
+  private streamBroadcast(
+    commandPackage: any,
+    timeout: number,
+    res: Response,
+  ): void {
+    const stream$ = this.publisher.broadcastCommandStream(commandPackage, timeout);
+
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+
+    // Track completion state per device
+    const deviceStates = new Map<
+      string,
+      { isFinal: boolean; success?: boolean }
+    >();
+
+    const subscription = stream$.subscribe({
+      next: (
+        update: ProgressUpdate & {
+          totalDevices: number;
+          completedDevices: number;
+        },
+      ) => {
+        // Track state for this device
+        if (update.isFinal) {
+          deviceStates.set(update.deviceId, {
+            isFinal: true,
+            success: update.success,
+          });
+        }
+
+        const event = this.formatBroadcastProgressEvent(update, deviceStates);
+        res.write(`data: ${JSON.stringify(event)}\n\n`);
+      },
+      complete: () => {
+        res.write(
+          `data: ${JSON.stringify({
+            event: "complete",
+            data: {
+              total_devices: deviceStates.size,
+              successful: Array.from(deviceStates.values()).filter((s) => s.success)
+                .length,
+              failed: Array.from(deviceStates.values()).filter(
+                (s) => s.isFinal && !s.success,
+              ).length,
+            },
+          })}\n\n`,
+        );
+        res.end();
+      },
+      error: (err: Error) => {
+        res.write(
+          `data: ${JSON.stringify({
+            event: "error",
+            data: { message: err.message },
+          })}\n\n`,
+        );
+        res.end();
+      },
+    });
+
+    // Clean up subscription when client disconnects
+    res.on("close", () => {
+      subscription.unsubscribe();
+    });
+  }
+
+  private formatProgressEvent(update: ProgressUpdate): StreamEvent {
+    if (update.isFinal) {
+      return {
+        event: update.success ? "complete" : "error",
+        data: {
+          command_id: update.commandId,
+          device_id: update.deviceId,
+          success: update.success,
+          message: update.errorMessage,
+          timed_out: update.timedOut,
+        },
+      };
+    }
+
+    return {
+      event: "progress",
+      data: {
+        command_id: update.commandId,
+        device_id: update.deviceId,
+        status: update.status,
+        message: update.errorMessage,
+      },
+    };
+  }
+
+  private formatBroadcastProgressEvent(
+    update: ProgressUpdate & { totalDevices: number; completedDevices: number },
+    deviceStates: Map<string, { isFinal: boolean; success?: boolean }>,
+  ): StreamEvent {
+    const baseEvent = this.formatProgressEvent(update);
+
+    return {
+      event: baseEvent.event,
+      data: {
+        ...(baseEvent.data as object),
+        total_devices: update.totalDevices,
+        completed_devices: update.completedDevices,
+        remaining_devices: update.totalDevices - update.completedDevices,
+      },
     };
   }
 

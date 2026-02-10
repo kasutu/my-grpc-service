@@ -8,13 +8,22 @@ import {
   HttpStatus,
   Res,
   Query,
+  Header,
+  Sse,
 } from "@nestjs/common";
 import type { Response } from "express";
+import { Observable, map } from "rxjs";
 import {
   ContentPublisherService,
   AckResult,
+  type ProgressUpdate,
 } from "./content-publisher.service";
 import { ContentMapper } from "src/content/interfaces/content.mapper";
+
+interface StreamEvent {
+  event: "progress" | "complete" | "error";
+  data: unknown;
+}
 
 @Controller("content")
 export class ContentHttpController {
@@ -27,6 +36,7 @@ export class ContentHttpController {
     @Body() body: any,
     @Query("timeout") timeoutMs: string = "5000",
     @Query("ack") requireAck: string = "true",
+    @Query("stream") streamMode: string = "false",
     @Res({ passthrough: true }) res: Response,
   ) {
     // Convert snake_case JSON to camelCase interface
@@ -38,6 +48,12 @@ export class ContentHttpController {
     console.log(`Mapped deliveryId: ${contentPackage.deliveryId}`);
 
     const timeout = parseInt(timeoutMs, 10) || 5000;
+
+    // If stream mode is requested, return SSE stream
+    if (streamMode.toLowerCase() === "true") {
+      return this.streamToDevice(deviceId, contentPackage, timeout, res);
+    }
+
     const result = await this.publisher.publishToDevice(
       deviceId,
       contentPackage,
@@ -47,12 +63,16 @@ export class ContentHttpController {
     return this.formatResponse(result, res);
   }
 
-  @Post("broadcast")
-  @HttpCode(HttpStatus.OK)
-  async broadcast(
+  @Post("push/:deviceId/stream")
+  @Header("Content-Type", "text/event-stream")
+  @Header("Cache-Control", "no-cache")
+  @Header("Connection", "keep-alive")
+  async pushToDeviceStream(
+    @Param("deviceId") deviceId: string,
     @Body() body: any,
     @Query("timeout") timeoutMs: string = "5000",
     @Query("ack") requireAck: string = "true",
+    @Res() res: Response,
   ) {
     const contentPackage = ContentMapper.toContentPackage({
       ...body,
@@ -60,15 +80,219 @@ export class ContentHttpController {
     });
 
     const timeout = parseInt(timeoutMs, 10) || 5000;
+    return this.streamToDevice(deviceId, contentPackage, timeout, res);
+  }
+
+  private streamToDevice(
+    deviceId: string,
+    contentPackage: any,
+    timeout: number,
+    res: Response,
+  ): void {
+    const stream$ = this.publisher.publishToDeviceStream(
+      deviceId,
+      contentPackage,
+      timeout,
+    );
+
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+
+    const subscription = stream$.subscribe({
+      next: (update: ProgressUpdate) => {
+        const event = this.formatProgressEvent(update);
+        res.write(`data: ${JSON.stringify(event)}\n\n`);
+      },
+      complete: () => {
+        res.end();
+      },
+      error: (err: Error) => {
+        res.write(
+          `data: ${JSON.stringify({
+            event: "error",
+            data: { message: err.message },
+          })}\n\n`,
+        );
+        res.end();
+      },
+    });
+
+    // Clean up subscription when client disconnects
+    res.on("close", () => {
+      subscription.unsubscribe();
+    });
+  }
+
+  @Post("broadcast")
+  @HttpCode(HttpStatus.OK)
+  async broadcast(
+    @Body() body: any,
+    @Query("timeout") timeoutMs: string = "5000",
+    @Query("ack") requireAck: string = "true",
+    @Query("stream") streamMode: string = "false",
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const contentPackage = ContentMapper.toContentPackage({
+      ...body,
+      requires_ack: requireAck.toLowerCase() !== "false",
+    });
+
+    const timeout = parseInt(timeoutMs, 10) || 5000;
+
+    // If stream mode is requested, return SSE stream
+    if (streamMode.toLowerCase() === "true") {
+      return this.streamBroadcast(contentPackage, timeout, res);
+    }
+
     const results = await this.publisher.broadcast(contentPackage, timeout);
 
     return this.formatBroadcastResponse(results);
+  }
+
+  @Post("broadcast/stream")
+  @Header("Content-Type", "text/event-stream")
+  @Header("Cache-Control", "no-cache")
+  @Header("Connection", "keep-alive")
+  async broadcastStream(
+    @Body() body: any,
+    @Query("timeout") timeoutMs: string = "5000",
+    @Query("ack") requireAck: string = "true",
+    @Res() res: Response,
+  ) {
+    const contentPackage = ContentMapper.toContentPackage({
+      ...body,
+      requires_ack: requireAck.toLowerCase() !== "false",
+    });
+
+    const timeout = parseInt(timeoutMs, 10) || 5000;
+    return this.streamBroadcast(contentPackage, timeout, res);
+  }
+
+  private streamBroadcast(
+    contentPackage: any,
+    timeout: number,
+    res: Response,
+  ): void {
+    const stream$ = this.publisher.broadcastStream(contentPackage, timeout);
+
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+
+    // Track completion state per device
+    const deviceStates = new Map<
+      string,
+      { isFinal: boolean; success?: boolean }
+    >();
+
+    const subscription = stream$.subscribe({
+      next: (
+        update: ProgressUpdate & { totalDevices: number; completedDevices: number },
+      ) => {
+        // Track state for this device
+        if (update.isFinal) {
+          deviceStates.set(update.deviceId, {
+            isFinal: true,
+            success: update.success,
+          });
+        }
+
+        const event = this.formatBroadcastProgressEvent(update, deviceStates);
+        res.write(`data: ${JSON.stringify(event)}\n\n`);
+      },
+      complete: () => {
+        res.write(
+          `data: ${JSON.stringify({
+            event: "complete",
+            data: {
+              total_devices: deviceStates.size,
+              successful: Array.from(deviceStates.values()).filter((s) => s.success)
+                .length,
+              failed: Array.from(deviceStates.values()).filter(
+                (s) => s.isFinal && !s.success,
+              ).length,
+            },
+          })}\n\n`,
+        );
+        res.end();
+      },
+      error: (err: Error) => {
+        res.write(
+          `data: ${JSON.stringify({
+            event: "error",
+            data: { message: err.message },
+          })}\n\n`,
+        );
+        res.end();
+      },
+    });
+
+    // Clean up subscription when client disconnects
+    res.on("close", () => {
+      subscription.unsubscribe();
+    });
   }
 
   @Get("stats")
   getStats() {
     return {
       connected_devices: this.publisher.getConnectedCount(),
+    };
+  }
+
+  private formatProgressEvent(update: ProgressUpdate): StreamEvent {
+    if (update.isFinal) {
+      return {
+        event: update.success ? "complete" : "error",
+        data: {
+          delivery_id: update.deliveryId,
+          device_id: update.deviceId,
+          success: update.success,
+          message: update.errorMessage,
+          timed_out: update.timedOut,
+        },
+      };
+    }
+
+    return {
+      event: "progress",
+      data: {
+        delivery_id: update.deliveryId,
+        device_id: update.deviceId,
+        status: update.status,
+        progress: update.progress
+          ? {
+              percent_complete: update.progress.percentComplete,
+              total_media: update.progress.totalMediaCount,
+              completed_media: update.progress.completedMediaCount,
+              failed_media: update.progress.failedMediaCount,
+              media_status: update.progress.mediaStatus.map((m) => ({
+                media_id: m.mediaId,
+                state: m.state,
+                error_code: m.errorCode || undefined,
+                error_message: m.errorMessage || undefined,
+              })),
+            }
+          : undefined,
+      },
+    };
+  }
+
+  private formatBroadcastProgressEvent(
+    update: ProgressUpdate & { totalDevices: number; completedDevices: number },
+    deviceStates: Map<string, { isFinal: boolean; success?: boolean }>,
+  ): StreamEvent {
+    const baseEvent = this.formatProgressEvent(update);
+
+    return {
+      event: baseEvent.event,
+      data: {
+        ...(baseEvent.data as object),
+        total_devices: update.totalDevices,
+        completed_devices: update.completedDevices,
+        remaining_devices: update.totalDevices - update.completedDevices,
+      },
     };
   }
 
