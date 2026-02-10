@@ -247,9 +247,18 @@ GET    /content/stats              # Get connected device count
 
 **Streaming Mode:**
 Add `?stream=true` to any push/broadcast endpoint to receive Server-Sent Events (SSE) with progress updates:
+
+**Single Device Events:**
 - `progress` events: Intermediate status updates (RECEIVED, IN_PROGRESS)
 - `complete` events: Final success status (COMPLETED)
 - `error` events: Final failure status (FAILED, PARTIAL) or timeouts
+
+**Broadcast Events:**
+- `started` event: Initial event indicating broadcast started with device count
+- `progress` events: Per-device status updates
+- `complete` events: Per-device final results
+- `summary` event: Final summary with total/successful/failed counts
+- `error` events: Errors during broadcast
 
 Example with curl:
 ```bash
@@ -266,6 +275,16 @@ Progress event format:
 Complete event format:
 ```json
 {"event": "complete", "data": {"delivery_id": "pkg-001", "device_id": "device-001", "success": true, "message": "Content delivered successfully", "timed_out": false}}
+```
+
+Broadcast started event:
+```json
+{"event": "started", "data": {"delivery_id": "pkg-001", "total_devices": 5}}
+```
+
+Broadcast summary event:
+```json
+{"event": "summary", "data": {"total_devices": 5, "successful": 4, "failed": 1}}
 ```
 
 ### Commands API
@@ -288,9 +307,18 @@ GET    /commands/stats                      # Get connected count
 
 **Streaming Mode:**
 Add `?stream=true` to any command endpoint to receive Server-Sent Events (SSE) with progress updates:
+
+**Single Device Events:**
 - `progress` events: Command received, executing (RECEIVED status)
 - `complete` events: Command executed successfully (COMPLETED)
 - `error` events: Command failed (FAILED, REJECTED) or timeout
+
+**Broadcast Events:**
+- `started` event: Initial event with command ID and device count
+- `progress` events: Per-device status updates
+- `complete` events: Per-device final results  
+- `summary` event: Final summary with total/successful/failed counts
+- `error` events: Errors during broadcast
 
 Example with curl:
 ```bash

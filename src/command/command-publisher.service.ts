@@ -418,15 +418,34 @@ export class CommandPublisherService implements OnModuleDestroy {
   broadcastCommandStream(
     commandPackage: CommandPackage,
     timeoutMs: number = 60000,
-  ): Observable<ProgressUpdate & { totalDevices: number; completedDevices: number }> {
+  ): Observable<
+    | (ProgressUpdate & { totalDevices: number; completedDevices: number })
+    | { type: "started"; totalDevices: number; commandId: string }
+    | { type: "complete"; totalDevices: number; successful: number; failed: number }
+  > {
     return new Observable((subscriber) => {
       const devices = Array.from(this.subscriptions.entries()).filter(
         ([, stream$]) => !stream$.closed,
       );
       const totalDevices = devices.length;
       let completedDevices = 0;
+      let successfulCount = 0;
+      let failedCount = 0;
+
+      // Emit started event immediately
+      subscriber.next({
+        type: "started" as const,
+        totalDevices,
+        commandId: commandPackage.commandId,
+      });
 
       if (totalDevices === 0) {
+        subscriber.next({
+          type: "complete" as const,
+          totalDevices: 0,
+          successful: 0,
+          failed: 0,
+        });
         subscriber.complete();
         return;
       }
@@ -447,10 +466,21 @@ export class CommandPublisherService implements OnModuleDestroy {
             });
             if (update.isFinal) {
               completedDevices++;
+              if (update.success) {
+                successfulCount++;
+              } else {
+                failedCount++;
+              }
             }
           },
           complete: () => {
             if (completedDevices >= totalDevices) {
+              subscriber.next({
+                type: "complete" as const,
+                totalDevices,
+                successful: successfulCount,
+                failed: failedCount,
+              });
               subscriber.complete();
             }
           },

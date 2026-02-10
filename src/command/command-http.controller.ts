@@ -74,8 +74,9 @@ export class CommandHttpController {
 
   @Post("clock/:deviceId/stream")
   @Header("Content-Type", "text/event-stream")
-  @Header("Cache-Control", "no-cache")
+  @Header("Cache-Control", "no-cache, no-transform")
   @Header("Connection", "keep-alive")
+  @Header("X-Accel-Buffering", "no")
   async setClockStream(
     @Param("deviceId") deviceId: string,
     @Body() body: any,
@@ -125,8 +126,9 @@ export class CommandHttpController {
 
   @Post("reboot/:deviceId/stream")
   @Header("Content-Type", "text/event-stream")
-  @Header("Cache-Control", "no-cache")
+  @Header("Cache-Control", "no-cache, no-transform")
   @Header("Connection", "keep-alive")
+  @Header("X-Accel-Buffering", "no")
   async rebootDeviceStream(
     @Param("deviceId") deviceId: string,
     @Body() body: any,
@@ -177,8 +179,9 @@ export class CommandHttpController {
 
   @Post("network/:deviceId/stream")
   @Header("Content-Type", "text/event-stream")
-  @Header("Cache-Control", "no-cache")
+  @Header("Cache-Control", "no-cache, no-transform")
   @Header("Connection", "keep-alive")
+  @Header("X-Accel-Buffering", "no")
   async updateNetworkStream(
     @Param("deviceId") deviceId: string,
     @Body() body: any,
@@ -230,8 +233,9 @@ export class CommandHttpController {
 
   @Post("rotate/:deviceId/stream")
   @Header("Content-Type", "text/event-stream")
-  @Header("Cache-Control", "no-cache")
+  @Header("Cache-Control", "no-cache, no-transform")
   @Header("Connection", "keep-alive")
+  @Header("X-Accel-Buffering", "no")
   async rotateScreenStream(
     @Param("deviceId") deviceId: string,
     @Body() body: any,
@@ -281,8 +285,9 @@ export class CommandHttpController {
 
   @Post("broadcast/clock/stream")
   @Header("Content-Type", "text/event-stream")
-  @Header("Cache-Control", "no-cache")
+  @Header("Cache-Control", "no-cache, no-transform")
   @Header("Connection", "keep-alive")
+  @Header("X-Accel-Buffering", "no")
   async broadcastClockStream(
     @Body() body: any,
     @Query("timeout") timeoutMs: string = "5000",
@@ -331,8 +336,9 @@ export class CommandHttpController {
 
   @Post("broadcast/rotate/stream")
   @Header("Content-Type", "text/event-stream")
-  @Header("Cache-Control", "no-cache")
+  @Header("Cache-Control", "no-cache, no-transform")
   @Header("Connection", "keep-alive")
+  @Header("X-Accel-Buffering", "no")
   async broadcastRotateStream(
     @Body() body: any,
     @Query("timeout") timeoutMs: string = "5000",
@@ -372,8 +378,14 @@ export class CommandHttpController {
     );
 
     res.setHeader("Content-Type", "text/event-stream");
-    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
     res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no"); // Disable nginx buffering
+    res.status(200);
+    res.flushHeaders(); // Send headers immediately
+
+    // Send an initial comment to establish connection (some clients need this)
+    res.write(":ok\n\n");
 
     const subscription = stream$.subscribe({
       next: (update: ProgressUpdate) => {
@@ -408,8 +420,14 @@ export class CommandHttpController {
     const stream$ = this.publisher.broadcastCommandStream(commandPackage, timeout);
 
     res.setHeader("Content-Type", "text/event-stream");
-    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
     res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no"); // Disable nginx buffering
+    res.status(200);
+    res.flushHeaders(); // Send headers immediately
+
+    // Send an initial comment to establish connection (some clients need this)
+    res.write(":ok\n\n");
 
     // Track completion state per device
     const deviceStates = new Map<
@@ -419,11 +437,38 @@ export class CommandHttpController {
 
     const subscription = stream$.subscribe({
       next: (
-        update: ProgressUpdate & {
-          totalDevices: number;
-          completedDevices: number;
-        },
+        update:
+          | (ProgressUpdate & { totalDevices: number; completedDevices: number })
+          | { type: "started"; totalDevices: number; commandId: string }
+          | { type: "complete"; totalDevices: number; successful: number; failed: number },
       ) => {
+        // Handle meta events (started, complete)
+        if ("type" in update) {
+          if (update.type === "started") {
+            res.write(
+              `data: ${JSON.stringify({
+                event: "started",
+                data: {
+                  command_id: update.commandId,
+                  total_devices: update.totalDevices,
+                },
+              })}\n\n`,
+            );
+          } else if (update.type === "complete") {
+            res.write(
+              `data: ${JSON.stringify({
+                event: "summary",
+                data: {
+                  total_devices: update.totalDevices,
+                  successful: update.successful,
+                  failed: update.failed,
+                },
+              })}\n\n`,
+            );
+          }
+          return;
+        }
+
         // Track state for this device
         if (update.isFinal) {
           deviceStates.set(update.deviceId, {
@@ -436,19 +481,6 @@ export class CommandHttpController {
         res.write(`data: ${JSON.stringify(event)}\n\n`);
       },
       complete: () => {
-        res.write(
-          `data: ${JSON.stringify({
-            event: "complete",
-            data: {
-              total_devices: deviceStates.size,
-              successful: Array.from(deviceStates.values()).filter((s) => s.success)
-                .length,
-              failed: Array.from(deviceStates.values()).filter(
-                (s) => s.isFinal && !s.success,
-              ).length,
-            },
-          })}\n\n`,
-        );
         res.end();
       },
       error: (err: Error) => {
